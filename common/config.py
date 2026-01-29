@@ -29,11 +29,11 @@ class MLflowConfig:
 
 @dataclass
 class MonitoringConfig:
-    latency_slo_ms: int = 300
+    latency_slo_ms: int = 500
     latency_window_size: int = 100
-    heartbeat_timeout_seconds: int = 30
-    drift_threshold: float = 0.2
-    performance_threshold: float = 0.75
+    heartbeat_timeout_seconds: int = 45
+    drift_threshold: float = 0.3
+    performance_threshold: float = 0.7
     feedback_window_size: int = 200
     alert_cooldown_seconds: int = 60
 

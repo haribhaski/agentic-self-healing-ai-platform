@@ -1,1 +1,41 @@
-/bin/bash: line 5: python: command not found
+2026-01-29 17:56:19,887 - HealingAgent - INFO - HealingAgent started, consuming from alerts and policy-decisions
+2026-01-29 17:57:09,933 - HealingAgent - INFO - Handling alert: AGENT_DOWN
+2026-01-29 17:57:09,938 - HealingAgent - INFO - Requesting AGL approval for AGENT_RESTART (incident 987f38f9-e6ae-4c89-9353-3bff9f956d02)
+2026-01-29 17:57:09,940 - HealingAgent - INFO - Handling alert: AGENT_DOWN
+2026-01-29 17:57:09,941 - HealingAgent - INFO - Requesting AGL approval for AGENT_RESTART (incident 218f06f6-13f6-4241-8c4a-11c2bcad5c12)
+2026-01-29 17:57:09,941 - HealingAgent - INFO - Handling alert: AGENT_DOWN
+2026-01-29 17:57:09,942 - HealingAgent - INFO - Requesting AGL approval for AGENT_RESTART (incident 2e42c0b7-7d06-471a-b7f3-0aa57a4e09c7)
+2026-01-29 17:57:09,942 - HealingAgent - INFO - Handling alert: AGENT_DOWN
+2026-01-29 17:57:09,942 - HealingAgent - INFO - Requesting AGL approval for AGENT_RESTART (incident e9f16c8e-8d3a-4b51-a710-f1d2dc3a820d)
+2026-01-29 17:57:10,116 - HealingAgent - INFO - Executed RESTART_AGENT for incident 987f38f9-e6ae-4c89-9353-3bff9f956d02
+2026-01-29 17:57:10,131 - HealingAgent - ERROR - Error processing message: (psycopg2.errors.InvalidTextRepresentation) invalid input value for enum incidenttype: "RESTART_AGENT"
+LINE 1: ...) VALUES ('8b929d7d-7da4-43b1-adae-18c120e61864', 'RESTART_A...
+                                                             ^
+
+[SQL: INSERT INTO memory_chunks (memory_id, incident_type, incident_summary, action_taken, outcome, metrics_before, metrics_after, mttr_seconds, created_at) VALUES (%(memory_id)s, %(incident_type)s, %(incident_summary)s, %(action_taken)s, %(outcome)s, %(metrics_before)s, %(metrics_after)s, %(mttr_seconds)s, %(created_at)s)]
+[parameters: {'memory_id': '8b929d7d-7da4-43b1-adae-18c120e61864', 'incident_type': 'RESTART_AGENT', 'incident_summary': 'Automated action for RESTART_AGENT', 'action_taken': '{"action_type": "RESTART_AGENT", "config_changes": {"agent": "PolicyAgent", "restart": true, "reason": "Agent heartbeat missing"}, "expected_outcome": "Restore heartbeat"}', 'outcome': 'EXECUTED', 'metrics_before': 'null', 'metrics_after': 'null', 'mttr_seconds': None, 'created_at': datetime.datetime(2026, 1, 29, 12, 27, 10, 118732)}]
+(Background on this error at: https://sqlalche.me/e/20/9h9h)
+2026-01-29 17:57:10,168 - HealingAgent - INFO - Executed RESTART_AGENT for incident 218f06f6-13f6-4241-8c4a-11c2bcad5c12
+2026-01-29 17:57:10,226 - HealingAgent - ERROR - Error processing message: (psycopg2.errors.InvalidTextRepresentation) invalid input value for enum incidenttype: "RESTART_AGENT"
+LINE 1: ...) VALUES ('4b011c7c-803f-43f1-8e5d-e1546241a1e7', 'RESTART_A...
+                                                             ^
+
+[SQL: INSERT INTO memory_chunks (memory_id, incident_type, incident_summary, action_taken, outcome, metrics_before, metrics_after, mttr_seconds, created_at) VALUES (%(memory_id)s, %(incident_type)s, %(incident_summary)s, %(action_taken)s, %(outcome)s, %(metrics_before)s, %(metrics_after)s, %(mttr_seconds)s, %(created_at)s)]
+[parameters: {'memory_id': '4b011c7c-803f-43f1-8e5d-e1546241a1e7', 'incident_type': 'RESTART_AGENT', 'incident_summary': 'Automated action for RESTART_AGENT', 'action_taken': '{"action_type": "RESTART_AGENT", "config_changes": {"agent": "HealingAgent", "restart": true, "reason": "Agent heartbeat missing"}, "expected_outcome": "Restore heartbeat"}', 'outcome': 'EXECUTED', 'metrics_before': 'null', 'metrics_after': 'null', 'mttr_seconds': None, 'created_at': datetime.datetime(2026, 1, 29, 12, 27, 10, 170109)}]
+(Background on this error at: https://sqlalche.me/e/20/9h9h)
+2026-01-29 17:57:10,252 - HealingAgent - INFO - Executed RESTART_AGENT for incident 2e42c0b7-7d06-471a-b7f3-0aa57a4e09c7
+2026-01-29 17:57:10,255 - HealingAgent - ERROR - Error processing message: (psycopg2.errors.InvalidTextRepresentation) invalid input value for enum incidenttype: "RESTART_AGENT"
+LINE 1: ...) VALUES ('616560cf-6fad-45ff-9777-cdb7a081d8c1', 'RESTART_A...
+                                                             ^
+
+[SQL: INSERT INTO memory_chunks (memory_id, incident_type, incident_summary, action_taken, outcome, metrics_before, metrics_after, mttr_seconds, created_at) VALUES (%(memory_id)s, %(incident_type)s, %(incident_summary)s, %(action_taken)s, %(outcome)s, %(metrics_before)s, %(metrics_after)s, %(mttr_seconds)s, %(created_at)s)]
+[parameters: {'memory_id': '616560cf-6fad-45ff-9777-cdb7a081d8c1', 'incident_type': 'RESTART_AGENT', 'incident_summary': 'Automated action for RESTART_AGENT', 'action_taken': '{"action_type": "RESTART_AGENT", "config_changes": {"agent": "PolicyAgent", "restart": true, "reason": "Agent heartbeat missing"}, "expected_outcome": "Restore heartbeat"}', 'outcome': 'EXECUTED', 'metrics_before': 'null', 'metrics_after': 'null', 'mttr_seconds': None, 'created_at': datetime.datetime(2026, 1, 29, 12, 27, 10, 253439)}]
+(Background on this error at: https://sqlalche.me/e/20/9h9h)
+2026-01-29 17:57:10,268 - HealingAgent - INFO - Executed RESTART_AGENT for incident e9f16c8e-8d3a-4b51-a710-f1d2dc3a820d
+2026-01-29 17:57:10,272 - HealingAgent - ERROR - Error processing message: (psycopg2.errors.InvalidTextRepresentation) invalid input value for enum incidenttype: "RESTART_AGENT"
+LINE 1: ...) VALUES ('4b8e49ca-7355-418e-acf8-1d697a5f81c2', 'RESTART_A...
+                                                             ^
+
+[SQL: INSERT INTO memory_chunks (memory_id, incident_type, incident_summary, action_taken, outcome, metrics_before, metrics_after, mttr_seconds, created_at) VALUES (%(memory_id)s, %(incident_type)s, %(incident_summary)s, %(action_taken)s, %(outcome)s, %(metrics_before)s, %(metrics_after)s, %(mttr_seconds)s, %(created_at)s)]
+[parameters: {'memory_id': '4b8e49ca-7355-418e-acf8-1d697a5f81c2', 'incident_type': 'RESTART_AGENT', 'incident_summary': 'Automated action for RESTART_AGENT', 'action_taken': '{"action_type": "RESTART_AGENT", "config_changes": {"agent": "HealingAgent", "restart": true, "reason": "Agent heartbeat missing"}, "expected_outcome": "Restore heartbeat"}', 'outcome': 'EXECUTED', 'metrics_before': 'null', 'metrics_after': 'null', 'mttr_seconds': None, 'created_at': datetime.datetime(2026, 1, 29, 12, 27, 10, 269551)}]
+(Background on this error at: https://sqlalche.me/e/20/9h9h)
