@@ -21,7 +21,7 @@ from common.metrics_utils import AgentMetricsExporter
 # Log file path
 LOG_FILE = os.path.join(os.path.dirname(__file__), "../../backend/logs/feature.log")
 
-logger = setup_logger("FeatureAgent", config.kafka, log_file=LOG_FILE)
+logger = setup_logger("FeatureAgent", config.kafka)
 
 class FeatureAgent:
     def __init__(self):

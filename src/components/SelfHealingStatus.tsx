@@ -56,7 +56,11 @@ export function SelfHealingStatus() {
             status: rawData.level?.toLowerCase() === 'error' ? 'error' : 'success',
             agent: rawData.agent,
           };
-          setLogs((prev) => [newLog, ...prev].slice(0, 50));
+          
+          // Only show logs from Healing Agent as requested by user
+          if (rawData.agent === 'HealingAgent') {
+            setLogs((prev) => [newLog, ...prev].slice(0, 50));
+          }
         } catch (error) {
           console.error('Failed to parse log:', error);
         }

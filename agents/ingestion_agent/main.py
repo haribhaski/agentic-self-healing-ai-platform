@@ -22,7 +22,7 @@ import psutil
 # Log file path
 LOG_FILE = os.path.join(os.path.dirname(__file__), "../../backend/logs/ingestion.log")
 
-logger = setup_logger("IngestionAgent", config.kafka, log_file=LOG_FILE)
+logger = setup_logger("IngestionAgent", config.kafka)
 
 class IngestionAgent:
     def __init__(self):
