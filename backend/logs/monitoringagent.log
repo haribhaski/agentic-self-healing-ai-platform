@@ -1,5 +1,0 @@
-2026-01-29 17:56:19,997 - MonitoringAgent - INFO - MonitoringAgent: monitoring agent-metrics
-2026-01-29 17:57:09,797 - MonitoringAgent - WARNING - ALERT: PolicyAgent is DOWN
-2026-01-29 17:57:09,842 - MonitoringAgent - WARNING - ALERT: HealingAgent is DOWN
-2026-01-29 17:57:09,849 - MonitoringAgent - WARNING - ALERT: PolicyAgent is DOWN
-2026-01-29 17:57:09,853 - MonitoringAgent - WARNING - ALERT: HealingAgent is DOWN

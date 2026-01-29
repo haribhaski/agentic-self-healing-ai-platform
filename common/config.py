@@ -7,7 +7,7 @@ class KafkaConfig:
     bootstrap_servers: str = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "127.0.0.1:29092")
     auto_offset_reset: str = "latest"
     enable_auto_commit: bool = True
-    group_id_prefix: str = "agentic-platform"
+    group_id_prefix: str = "agentic-platform-v3"
 
 @dataclass
 class DatabaseConfig:
@@ -29,11 +29,11 @@ class MLflowConfig:
 
 @dataclass
 class MonitoringConfig:
-    latency_slo_ms: int = 500
+    latency_slo_ms: int = 300
     latency_window_size: int = 100
-    heartbeat_timeout_seconds: int = 45
-    drift_threshold: float = 0.3
-    performance_threshold: float = 0.7
+    heartbeat_timeout_seconds: int = 30
+    drift_threshold: float = 0.2
+    performance_threshold: float = 0.75
     feedback_window_size: int = 200
     alert_cooldown_seconds: int = 60
 

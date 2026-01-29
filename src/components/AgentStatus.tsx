@@ -1,55 +1,56 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Bot, Brain, Shield, RefreshCw, Search, Wrench, CheckCircle, AlertTriangle, Clock } from "lucide-react";
+import { Bot, Brain, Shield, RefreshCw, Search, Wrench, CheckCircle, AlertTriangle, Clock, Zap, Activity } from "lucide-react";
+import { useEffect, useState } from "react";
 
-const agents = [
+const INITIAL_AGENTS = [
   {
-    name: "Planner Agent",
+    name: "Ingestion Agent",
     icon: Brain,
     status: "active",
-    task: "Orchestrating model retraining workflow",
-    decisions: 234,
+    task: "Injecting events into Kafka",
+    decisions: 0,
     color: "#00d9ff",
   },
   {
-    name: "Monitor Agent",
+    name: "Feature Agent",
     icon: Search,
     status: "active",
-    task: "Analyzing Prometheus metrics stream",
-    decisions: 1892,
+    task: "Processing raw features",
+    decisions: 0,
     color: "#7c3aed",
   },
   {
-    name: "Remediator Agent",
-    icon: Wrench,
-    status: "idle",
-    task: "Awaiting remediation tasks",
-    decisions: 89,
+    name: "Model Agent",
+    icon: Zap,
+    status: "active",
+    task: "Executing model inference",
+    decisions: 0,
     color: "#10b981",
   },
   {
-    name: "Evaluator Agent",
+    name: "Decision Agent",
     icon: Shield,
     status: "active",
-    task: "Checking drift scores from Evidently",
-    decisions: 456,
+    task: "Applying policy logic",
+    decisions: 0,
     color: "#f59e0b",
   },
   {
-    name: "SQL Agent",
-    icon: Bot,
+    name: "Monitoring Agent",
+    icon: Activity,
     status: "active",
-    task: "Querying incident history",
-    decisions: 678,
+    task: "Analyzing metrics stream",
+    decisions: 0,
     color: "#3b82f6",
   },
   {
-    name: "Retrainer Agent",
-    icon: RefreshCw,
-    status: "pending",
-    task: "Scheduled: Airflow job trigger",
-    decisions: 23,
+    name: "Healing Agent",
+    icon: Wrench,
+    status: "idle",
+    task: "Awaiting remediation tasks",
+    decisions: 0,
     color: "#ff4757",
   },
 ];
@@ -61,6 +62,76 @@ const statusConfig = {
 };
 
 export function AgentStatus() {
+  const [agents, setAgents] = useState(INITIAL_AGENTS);
+
+    useEffect(() => {
+      let logSource: EventSource | null = null;
+      let metricsSource: EventSource | null = null;
+      let reconnectTimeout: NodeJS.Timeout;
+  
+      const connect = () => {
+        if (logSource) logSource.close();
+        if (metricsSource) metricsSource.close();
+  
+        logSource = new EventSource('/api/logs');
+        metricsSource = new EventSource('/api/agent-metrics');
+  
+        logSource.onmessage = (event) => {
+          try {
+            if (!event.data) return;
+            const rawData = JSON.parse(event.data);
+            
+            if (rawData.agent) {
+              setAgents(prev => prev.map(agent => {
+                if (agent.name.toLowerCase().includes(rawData.agent.toLowerCase()) || 
+                    rawData.agent.toLowerCase().includes(agent.name.toLowerCase().replace(' agent', ''))) {
+                    return {
+                      ...agent,
+                      status: "active",
+                      task: rawData.message
+                    };
+                }
+                return agent;
+              }));
+            }
+          } catch (error) {}
+        };
+
+        metricsSource.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.agent) {
+              setAgents(prev => prev.map(agent => {
+                if (agent.name.toLowerCase().includes(data.agent.toLowerCase()) || 
+                    data.agent.toLowerCase().includes(agent.name.toLowerCase().replace(' agent', ''))) {
+                  return {
+                    ...agent,
+                    decisions: data.events_processed || agent.decisions
+                  };
+                }
+                return agent;
+              }));
+            }
+          } catch (e) {}
+        };
+  
+        logSource.onerror = () => {
+          logSource?.close();
+          reconnectTimeout = setTimeout(connect, 3000);
+        };
+      };
+  
+      connect();
+  
+      return () => {
+        if (logSource) logSource.close();
+        if (metricsSource) metricsSource.close();
+        clearTimeout(reconnectTimeout);
+      };
+    }, []);
+
+  const activeCount = agents.filter(a => a.status === "active").length;
+
   return (
     <div className="glass-card rounded-xl p-6">
       <div className="flex items-center justify-between mb-6">
@@ -75,7 +146,7 @@ export function AgentStatus() {
         </div>
         <div className="flex items-center gap-2">
           <div className="w-2 h-2 rounded-full bg-[#10b981] animate-pulse" />
-          <span className="text-xs text-[#6b6b80]">5/6 Active</span>
+          <span className="text-xs text-[#6b6b80]">{activeCount}/{agents.length} Active</span>
         </div>
       </div>
 

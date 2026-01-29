@@ -1,36 +1,47 @@
 import asyncio
 import json
 import logging
+import signal
+import time
 from datetime import datetime
-from kafka import KafkaConsumer, KafkaProducer
 import sys
 import os
-sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
-from common.config import Config
+import psutil
 
-from common.logger import setup_logger
+sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
 from common.config import config
+from common.logger import setup_logger
+from common.kafka_utils import create_producer, create_consumer
+from common.schemas import Prediction, Decision, AgentMetric
+from backend.database.db_manager import DatabaseManager
 
 logger = setup_logger("DecisionAgent", config.kafka)
 
 class DecisionAgent:
     def __init__(self):
-        self.config = config
-        self.consumer = KafkaConsumer(
-            'predictions',
-            bootstrap_servers=self.config.kafka.bootstrap_servers,
-            value_deserializer=lambda v: json.loads(v.decode('utf-8')),
-            group_id='decision-agent-group'
-        )
-        self.producer = KafkaProducer(
-            bootstrap_servers=self.config.kafka.bootstrap_servers,
-            value_serializer=lambda v: json.dumps(v).encode('utf-8')
-        )
+        self.config = config.get_agent_config("DecisionAgent", 8004)
+        self.producer = create_producer(self.config.kafka)
+        self.db = DatabaseManager(self.config.database.connection_string)
+        self.running = True
+        self.events_processed = 0
+        self.last_latency = 0.0
+        
+        # Signal handling
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop = asyncio.get_event_loop()
+                loop.add_signal_handler(sig, self.handle_shutdown)
+            except NotImplementedError:
+                pass
     
-    def make_decision(self, prediction_data):
-        """Make business decision based on prediction"""
-        risk_score = prediction_data.get('confidence', 0.0)
-        risk_class = prediction_data.get('prediction', 'UNKNOWN')
+    def handle_shutdown(self):
+        logger.info("Shutdown signal received...")
+        self.running = False
+        
+    def make_decision(self, prediction: Prediction):
+        start_time = time.time()
+        risk_score = prediction.confidence
+        risk_class = prediction.prediction
         
         if risk_class == "HIGH_RISK":
             action = "REJECT"
@@ -42,60 +53,90 @@ class DecisionAgent:
             action = "APPROVE"
             reason = f"Low risk score {risk_score:.3f}"
         
-        return action, reason
+        latency = (time.time() - start_time) * 1000
+        return action, reason, latency
     
-    def send_heartbeat(self):
-        """Send agent health metrics"""
-        heartbeat = {
-            "agent": "DecisionAgent",
-            "status": "OK",
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        self.producer.send('agent-metrics', heartbeat)
-    
-    async def process_predictions(self):
-        """Process predictions and make decisions"""
-        logger.info("DecisionAgent started, consuming from predictions")
-        
+    def process_message(self, topic: str, message: str):
+        if not self.running:
+            return
+            
+        try:
+            prediction = Prediction.from_json(message)
+            action, reason, latency = self.make_decision(prediction)
+            self.last_latency = latency
+            
+            decision = Decision(
+                trace_id=prediction.trace_id,
+                timestamp=datetime.utcnow().isoformat(),
+                decision=action,
+                reasoning=reason,
+                confidence=prediction.confidence,
+                metadata={"model_version": prediction.model_version}
+            )
+            
+            self.producer.send('decisions', decision.to_json())
+            self.events_processed += 1
+            
+            if self.events_processed % 100 == 0:
+                logger.info(f"Processed {self.events_processed} decisions")
+            
+        except Exception as e:
+            logger.error(f"Error processing prediction: {e}", exc_info=True)
+
+    async def heartbeat_loop(self):
+        while self.running:
+            try:
+                process = psutil.Process()
+                metric = AgentMetric(
+                    agent="DecisionAgent",
+                    status="OK",
+                    latency_ms=self.last_latency,
+                    timestamp=datetime.utcnow().isoformat(),
+                    cpu_percent=process.cpu_percent(),
+                    memory_mb=process.memory_info().rss / 1024 / 1024,
+                    events_processed=self.events_processed
+                )
+                self.producer.send('agent-metrics', metric.to_json())
+                
+                self.db.update_agent_health(
+                    agent_name="DecisionAgent",
+                    status="OK",
+                    latency_ms=metric.latency_ms,
+                    cpu_percent=metric.cpu_percent,
+                    memory_mb=metric.memory_mb,
+                    events_processed=self.events_processed
+                )
+            except Exception as e:
+                logger.error(f"Heartbeat error: {e}")
+            await asyncio.sleep(self.config.heartbeat_interval_seconds)
+
+    async def run(self):
         heartbeat_task = asyncio.create_task(self.heartbeat_loop())
         
+        self.consumer = create_consumer(
+            self.config.kafka,
+            ['predictions'],
+            f'{self.config.kafka.group_id_prefix}-decision-agent',
+            self.process_message
+        )
+        
+        logger.info("DecisionAgent starting consumer...")
         try:
-            for message in self.consumer:
-                try:
-                    prediction_data = message.value
-                    trace_id = prediction_data.get('trace_id', 'UNKNOWN')
-                    
-                    action, reason = self.make_decision(prediction_data)
-                    
-                    decision_event = {
-                        "trace_id": trace_id,
-                        "decision": action,
-                        "reasoning": reason,
-                        "risk_score": prediction_data.get('confidence', 0.0),
-                        "model_version": prediction_data.get('model_version', 'UNKNOWN'),
-                        "timestamp": datetime.utcnow().isoformat()
-                    }
-                    
-                    self.producer.send('decisions', decision_event)
-                    
-                    logger.info(f"Decision: {trace_id} -> {action} ({reason})")
-                    
-                except Exception as e:
-                    logger.error(f"Error processing prediction: {e}")
-                    
-        except KeyboardInterrupt:
-            logger.info("Shutting down DecisionAgent")
+            await asyncio.get_event_loop().run_in_executor(None, self.consumer.start)
         finally:
+            self.cleanup()
             heartbeat_task.cancel()
+
+    def cleanup(self):
+        logger.info("Cleaning up resources...")
+        self.running = False
+        if hasattr(self, 'consumer'):
             self.consumer.close()
+        if hasattr(self, 'producer'):
+            self.producer.flush()
             self.producer.close()
-    
-    async def heartbeat_loop(self):
-        """Send periodic heartbeats"""
-        while True:
-            self.send_heartbeat()
-            await asyncio.sleep(10)
+        logger.info("Shutdown complete")
 
 if __name__ == "__main__":
     agent = DecisionAgent()
-    asyncio.run(agent.process_predictions())
+    asyncio.run(agent.run())

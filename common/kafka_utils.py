@@ -13,23 +13,42 @@ class KafkaProducerWrapper:
         self.producer = KafkaProducer(
             bootstrap_servers=config.bootstrap_servers,
             value_serializer=lambda v: v.encode('utf-8') if isinstance(v, str) else json.dumps(v).encode('utf-8'),
-            key_serializer=lambda k: k.encode('utf-8') if k else None
+            key_serializer=lambda k: k.encode('utf-8') if k else None,
+            retries=5,
+            retry_backoff_ms=1000,
+            acks='all'
         )
     
     def send(self, topic: str, value: Any, key: Optional[str] = None) -> bool:
+        def on_success(record_metadata):
+            logger.debug(f"Message sent to {topic} partition {record_metadata.partition} offset {record_metadata.offset}")
+
+        def on_error(excp):
+            logger.error(f"Failed to send message to {topic}: {excp}")
+
         try:
             future = self.producer.send(topic, value=value, key=key)
+            future.add_callback(on_success)
+            future.add_errback(on_error)
+            # For critical messages we might want to wait, but usually we can be async
+            # and rely on callbacks and flush at shutdown.
+            # To meet the "Delivery confirmation" request without being purely fire-and-forget:
             record_metadata = future.get(timeout=10)
-            logger.debug(f"Message sent to {topic} partition {record_metadata.partition} offset {record_metadata.offset}")
             return True
         except KafkaError as e:
-            logger.error(f"Failed to send message to {topic}: {e}")
+            logger.error(f"Kafka error while sending to {topic}: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error while sending to {topic}: {e}")
             return False
     
     def flush(self):
+        logger.info("Flushing producer...")
         self.producer.flush()
     
     def close(self):
+        logger.info("Closing producer...")
+        self.producer.flush()
         self.producer.close()
 
 class KafkaConsumerWrapper:

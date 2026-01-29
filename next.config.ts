@@ -17,20 +17,20 @@ const nextConfig: NextConfig = {
       },
     ],
   },
-  outputFileTracingRoot: path.resolve(__dirname, '../../'),
   typescript: {
     ignoreBuildErrors: true,
   },
   eslint: {
     ignoreDuringBuilds: true,
   },
-  turbopack: {
-    rules: {
-      "*.{jsx,tsx}": {
-        loaders: [loaderPath]
+    turbopack: {
+      root: path.resolve(__dirname),
+      rules: {
+        "*.{jsx,tsx}": {
+          loaders: [loaderPath]
+        }
       }
     }
-  }
 } as NextConfig;
 
 export default nextConfig;

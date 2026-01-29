@@ -1,5 +1,7 @@
 import sys
 import os
+import signal
+import hashlib
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from common.kafka_utils import create_producer, create_consumer
@@ -14,7 +16,7 @@ from datetime import datetime
 import psutil
 
 from common.logger import setup_logger
-from common.config import config
+from common.metrics_utils import AgentMetricsExporter
 
 logger = setup_logger("FeatureAgent", config.kafka)
 
@@ -25,18 +27,32 @@ class FeatureAgent:
         self.db = DatabaseManager(self.config.database.connection_string)
         self.events_processed = 0
         self.running = True
+        self.last_latency = 0.0
+        
+        # Signal handling for graceful shutdown
+        signal.signal(signal.SIGINT, self.handle_shutdown)
+        signal.signal(signal.SIGTERM, self.handle_shutdown)
+        
         logger.info("FeatureAgent initialized")
     
+    def handle_shutdown(self, signum, frame):
+        logger.info(f"Received signal {signum}, shutting down...")
+        self.running = False
+
     def extract_features(self, event: RawEvent) -> FeatureVector:
         value = event.data.get("value", 0)
         category = event.data.get("category", "A")
         
+        # Deterministic feature_4 derived from event_id
+        hash_val = int(hashlib.md5(event.event_id.encode()).hexdigest(), 16)
+        feature_4 = (hash_val % 1000) / 1000.0
+        
         features = {
-            "feature_1": value * 2,
-            "feature_2": value / 10,
+            "feature_1": float(value * 2),
+            "feature_2": float(value / 10),
             "feature_3": 1.0 if category == "A" else 0.0,
-            "feature_4": random.uniform(0, 1),
-            "feature_5": value ** 0.5
+            "feature_4": feature_4,
+            "feature_5": float(abs(value) ** 0.5)
         }
         
         return FeatureVector(
@@ -47,15 +63,24 @@ class FeatureAgent:
         )
     
     def process_message(self, topic: str, message: str):
+        if not self.running:
+            return
+            
+        start_time = time.time()
         try:
             event = RawEvent.from_json(message)
             features = self.extract_features(event)
             
             self.producer.send("features", features.to_json(), key=features.trace_id)
             self.events_processed += 1
+            if self.events_processed % 100 == 0:
+                logger.info(f"Processed {self.events_processed} features")
+            
+            # Update real processing latency
+            self.last_latency = (time.time() - start_time) * 1000
             
         except Exception as e:
-            logger.error(f"Error processing message: {e}")
+            logger.error(f"Error processing message: {e}", exc_info=True)
     
     def send_heartbeat(self):
         while self.running:
@@ -64,7 +89,7 @@ class FeatureAgent:
                 metric = AgentMetric(
                     agent="FeatureAgent",
                     status="OK",
-                    latency_ms=random.uniform(15, 60),
+                    latency_ms=self.last_latency,
                     timestamp=datetime.utcnow().isoformat(),
                     cpu_percent=process.cpu_percent(),
                     memory_mb=process.memory_info().rss / 1024 / 1024,
@@ -90,13 +115,29 @@ class FeatureAgent:
         heartbeat_thread = threading.Thread(target=self.send_heartbeat, daemon=True)
         heartbeat_thread.start()
         
-        consumer = create_consumer(
+        self.consumer = create_consumer(
             self.config.kafka,
             ["raw-events"],
-            "feature-agent",
+            f"{self.config.kafka.group_id_prefix}-feature-agent",
             self.process_message
         )
-        consumer.start()
+        
+        logger.info("Starting consumer...")
+        try:
+            # The consumer.start() is blocking until KeyboardInterrupt or close()
+            self.consumer.start()
+        finally:
+            self.cleanup()
+
+    def cleanup(self):
+        logger.info("Cleaning up resources...")
+        self.running = False
+        if hasattr(self, 'consumer'):
+            self.consumer.close()
+        if hasattr(self, 'producer'):
+            self.producer.flush()
+            self.producer.close()
+        logger.info("Shutdown complete")
 
 if __name__ == "__main__":
     agent = FeatureAgent()

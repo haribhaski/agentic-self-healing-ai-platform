@@ -9,6 +9,7 @@ class IncidentType(str, Enum):
     PERF_DROP = "PERF_DROP"
     LATENCY_SLO_BREACH = "LATENCY_SLO_BREACH"
     AGENT_DOWN = "AGENT_DOWN"
+    FN_SPIKE = "FN_SPIKE"
 
 class IncidentStatus(str, Enum):
     OPEN = "OPEN"
@@ -33,12 +34,27 @@ class RawEvent:
     event_type: str
     data: Dict[str, Any]
     
+    def validate(self):
+        if not isinstance(self.event_id, str): raise ValueError("event_id must be string")
+        if not isinstance(self.trace_id, str): raise ValueError("trace_id must be string")
+        if not isinstance(self.event_type, str): raise ValueError("event_type must be string")
+        if not isinstance(self.data, dict): raise ValueError("data must be dict")
+        # Ensure 'value' exists and is numeric if it's a data event
+        if "value" in self.data and not isinstance(self.data["value"], (int, float)):
+            try:
+                self.data["value"] = float(self.data["value"])
+            except (ValueError, TypeError):
+                raise ValueError(f"Invalid value in data: {self.data['value']}")
+
     def to_json(self) -> str:
         return json.dumps(asdict(self))
     
     @classmethod
     def from_json(cls, json_str: str) -> 'RawEvent':
-        return cls(**json.loads(json_str))
+        data = json.loads(json_str)
+        instance = cls(**data)
+        instance.validate()
+        return instance
 
 @dataclass
 class FeatureVector:
@@ -162,6 +178,7 @@ class PolicyRequest:
 @dataclass
 class PolicyDecision:
     request_id: str
+    incident_id: str
     decision: AGLDecision
     approved_action: Dict[str, Any]
     timestamp: str

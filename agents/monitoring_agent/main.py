@@ -1,235 +1,249 @@
 import asyncio
 import json
 import logging
-from datetime import datetime, timedelta
+import signal
+import time
+from datetime import datetime
+import datetime as dt
 from collections import deque
-from kafka import KafkaConsumer, KafkaProducer
 import numpy as np
 import sys
 import os
-sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
-from common.config import Config
-from backend.database.db_manager import DatabaseManager
+import psutil
 
-from common.logger import setup_logger
+sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
 from common.config import config
+from common.logger import setup_logger
+from common.kafka_utils import create_producer, create_consumer
+from common.schemas import (
+    IncidentType, IncidentStatus, AgentMetric, 
+    Decision, Feedback, Alert, IncidentLog
+)
+from backend.database.db_manager import DatabaseManager
 
 logger = setup_logger("MonitoringAgent", config.kafka)
 
 class MonitoringAgent:
     def __init__(self):
-        self.config = config
+        self.config = config.get_agent_config("MonitoringAgent", 8005)
+        self.producer = create_producer(self.config.kafka)
         self.db = DatabaseManager(self.config.database.connection_string)
-        
-        self.metrics_consumer = KafkaConsumer(
-            'agent-metrics',
-            bootstrap_servers=self.config.kafka.bootstrap_servers,
-            value_deserializer=lambda v: json.loads(v.decode('utf-8')),
-            group_id='monitoring-agent-metrics'
-        )
-        
-        self.decisions_consumer = KafkaConsumer(
-            'decisions',
-            'feedback',
-            bootstrap_servers=self.config.kafka.bootstrap_servers,
-            value_deserializer=lambda v: json.loads(v.decode('utf-8')),
-            group_id='monitoring-agent-decisions'
-        )
-        
-        self.producer = KafkaProducer(
-            bootstrap_servers=self.config.kafka.bootstrap_servers,
-            value_serializer=lambda v: json.dumps(v).encode('utf-8')
-        )
         
         self.latency_window = deque(maxlen=100)
         self.accuracy_window = deque(maxlen=200)
         self.feature_distributions = deque(maxlen=1000)
         self.heartbeats = {}
-        self.latency_threshold_ms = 500
-        self.accuracy_threshold = 0.7
-        self.heartbeat_timeout_sec = 45
+        self.latency_threshold_ms = 300
+        self.accuracy_threshold = 0.8
+        self.heartbeat_timeout_sec = 30
+        self.running = True
+        self.events_processed = 0
+        self.last_latency = 0.0
+        
+        # Signal handling
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop = asyncio.get_event_loop()
+                loop.add_signal_handler(sig, self.handle_shutdown)
+            except NotImplementedError:
+                pass
     
+    def handle_shutdown(self):
+        logger.info("Shutdown signal received...")
+        self.running = False
+
     def check_heartbeats(self):
-        """Check for missing agent heartbeats"""
-        now = datetime.utcnow()
+        now = dt.datetime.now(dt.timezone.utc)
         for agent, last_seen in self.heartbeats.items():
+            if last_seen.tzinfo is None:
+                last_seen = last_seen.replace(tzinfo=dt.timezone.utc)
+                
             if (now - last_seen).total_seconds() > self.heartbeat_timeout_sec:
-                import uuid
-                incident_id = str(uuid.uuid4())
-                alert = {
-                    "incident_id": incident_id,
-                    "alert_type": "AGENT_DOWN",
-                    "agent": agent,
-                    "severity": "CRITICAL",
-                    "description": f"{agent} heartbeat missing for {(now - last_seen).total_seconds():.0f}s",
-                    "metrics": {"last_seen": last_seen.isoformat()},
-                    "timestamp": now.isoformat()
-                }
-                self.producer.send('alerts', alert)
+                existing_incident = self.db.get_open_incident_by_type(IncidentType.AGENT_DOWN)
+                if existing_incident:
+                    continue
+
+                alert = Alert(
+                    alert_id=f"ALR-{int(time.time())}",
+                    alert_type=IncidentType.AGENT_DOWN,
+                    severity="CRITICAL",
+                    timestamp=now.isoformat(),
+                    metrics_snapshot={"last_seen": last_seen.isoformat(), "agent": agent},
+                    description=f"{agent} heartbeat missing for {(now - last_seen).total_seconds():.0f}s"
+                )
+                self.producer.send('alerts', alert.to_json())
                 logger.warning(f"ALERT: {agent} is DOWN")
                 self.db.create_incident(
-                    incident_id=incident_id,
-                    incident_type="AGENT_DOWN",
-                    metrics_snapshot=alert["metrics"],
-                    description=alert["description"]
+                    incident_type=IncidentType.AGENT_DOWN,
+                    metrics_snapshot=alert.metrics_snapshot,
+                    description=alert.description
                 )
-    
-    def check_latency_slo(self):
-        """Check if latency SLO is breached"""
-        if len(self.latency_window) < 50:
-            return
-        
-        median_latency = np.median(self.latency_window)
-        p95_latency = np.percentile(self.latency_window, 95)
-        
-        if median_latency > self.latency_threshold_ms:
-            import uuid
-            incident_id = str(uuid.uuid4())
-            alert = {
-                "incident_id": incident_id,
-                "alert_type": "LATENCY_SLO_BREACH",
-                "severity": "HIGH",
-                "description": f"Median latency {median_latency:.1f}ms > {self.latency_threshold_ms}ms",
-                "metrics": {
-                    "median_latency_ms": median_latency,
-                    "p95_latency_ms": p95_latency,
-                    "threshold_ms": self.latency_threshold_ms
-                },
-                "timestamp": datetime.utcnow().isoformat()
-            }
-            self.producer.send('alerts', alert)
-            logger.warning(f"ALERT: Latency SLO breach - {median_latency:.1f}ms")
-            self.db.create_incident(
-                incident_id=incident_id,
-                incident_type="LATENCY_SLO_BREACH",
-                metrics_snapshot=alert["metrics"],
-                description=alert["description"]
-            )
-    
-    def check_performance_drop(self):
-        """Check for model performance degradation"""
-        if len(self.accuracy_window) < 100:
-            return
-        
-        recent_accuracy = np.mean(self.accuracy_window)
-        
-        if recent_accuracy < self.accuracy_threshold:
-            import uuid
-            incident_id = str(uuid.uuid4())
-            alert = {
-                "incident_id": incident_id,
-                "alert_type": "PERF_DROP",
-                "severity": "HIGH",
-                "description": f"Model accuracy {recent_accuracy:.3f} < {self.accuracy_threshold}",
-                "metrics": {
-                    "accuracy": recent_accuracy,
-                    "threshold": self.accuracy_threshold,
-                    "sample_size": len(self.accuracy_window)
-                },
-                "timestamp": datetime.utcnow().isoformat()
-            }
-            self.producer.send('alerts', alert)
-            logger.warning(f"ALERT: Performance drop - accuracy {recent_accuracy:.3f}")
-            self.db.create_incident(
-                incident_id=incident_id,
-                incident_type="PERF_DROP",
-                metrics_snapshot=alert["metrics"],
-                description=alert["description"]
-            )
-    
-    def check_data_drift(self):
-        """Check for data drift (simplified PSI)"""
-        if len(self.feature_distributions) < 500:
-            return
-        
-        recent = list(self.feature_distributions)[-200:]
-        reference = list(self.feature_distributions)[:200]
-        
-        recent_mean = np.mean(recent)
-        ref_mean = np.mean(reference)
-        
-        drift_score = abs(recent_mean - ref_mean) / (ref_mean + 1e-6)
-        
-        if drift_score > 0.3:
-            import uuid
-            incident_id = str(uuid.uuid4())
-            alert = {
-                "incident_id": incident_id,
-                "alert_type": "DATA_DRIFT",
-                "severity": "MEDIUM",
-                "description": f"Data drift detected: {drift_score:.3f}",
-                "metrics": {
-                    "drift_score": drift_score,
-                    "recent_mean": recent_mean,
-                    "reference_mean": ref_mean
-                },
-                "timestamp": datetime.utcnow().isoformat()
-            }
-            self.producer.send('alerts', alert)
-            logger.warning(f"ALERT: Data drift detected - {drift_score:.3f}")
-            self.db.create_incident(
-                incident_id=incident_id,
-                incident_type="DATA_DRIFT",
-                metrics_snapshot=alert["metrics"],
-                description=alert["description"]
-            )
-    
-    async def monitor_metrics(self):
-        """Monitor agent metrics (heartbeats)"""
-        logger.info("MonitoringAgent: monitoring agent-metrics")
-        
+
+    def process_metric(self, topic: str, message: str):
+        if not self.running: return
+        start_time = time.time()
         try:
-            for message in self.metrics_consumer:
-                try:
-                    metric = message.value
-                    agent = metric.get('agent')
-                    
-                    if agent:
-                        self.heartbeats[agent] = datetime.utcnow()
-                    
-                    if 'latency_ms' in metric:
-                        self.latency_window.append(metric['latency_ms'])
-                    
-                    self.check_heartbeats()
-                    self.check_latency_slo()
-                    
-                except Exception as e:
-                    logger.error(f"Error processing metric: {e}")
-        except KeyboardInterrupt:
-            logger.info("Shutting down metrics monitoring")
-    
-    async def monitor_decisions(self):
-        """Monitor decisions and feedback for performance"""
-        logger.info("MonitoringAgent: monitoring decisions and feedback")
-        
+            metric = AgentMetric.from_json(message)
+            agent = metric.agent
+            self.heartbeats[agent] = dt.datetime.now(dt.timezone.utc)
+            
+            if metric.latency_ms > 0:
+                self.latency_window.append(metric.latency_ms)
+            
+            self.check_heartbeats()
+            
+            self.events_processed += 1
+            if self.events_processed % 100 == 0:
+                logger.info(f"MonitoringAgent processed {self.events_processed} metrics")
+            
+            if len(self.latency_window) >= 50:
+                median_latency = np.median(self.latency_window)
+                if median_latency > self.latency_threshold_ms:
+                    existing = self.db.get_open_incident_by_type(IncidentType.LATENCY_SLO_BREACH)
+                    if not existing:
+                        alert = Alert(
+                            alert_id=f"ALR-LAT-{int(time.time())}",
+                            alert_type=IncidentType.LATENCY_SLO_BREACH,
+                            severity="HIGH",
+                            timestamp=datetime.utcnow().isoformat(),
+                            metrics_snapshot={"median_latency": float(median_latency)},
+                            description=f"Median latency {median_latency:.1f}ms > {self.latency_threshold_ms}ms"
+                        )
+                        self.producer.send('alerts', alert.to_json())
+                        self.db.create_incident(
+                            incident_type=IncidentType.LATENCY_SLO_BREACH,
+                            metrics_snapshot=alert.metrics_snapshot,
+                            description=alert.description
+                        )
+            
+            self.last_latency = (time.time() - start_time) * 1000
+            self.events_processed += 1
+        except Exception as e:
+            logger.error(f"Error processing metric: {e}")
+
+    def process_decision_feedback(self, topic: str, message: str):
+        if not self.running: return
         try:
-            for message in self.decisions_consumer:
-                try:
-                    event = message.value
+            if topic == 'feedback':
+                feedback = Feedback.from_json(message)
+                is_correct = (feedback.actual_outcome == feedback.predicted_outcome)
+                self.accuracy_window.append(1 if is_correct else 0)
+                
+                if len(self.accuracy_window) >= 100:
+                    acc = np.mean(self.accuracy_window)
+                    if acc < self.accuracy_threshold:
+                        existing = self.db.get_open_incident_by_type(IncidentType.PERF_DROP)
+                        if not existing:
+                            alert = Alert(
+                                alert_id=f"ALR-PERF-{int(time.time())}",
+                                alert_type=IncidentType.PERF_DROP,
+                                severity="HIGH",
+                                timestamp=datetime.utcnow().isoformat(),
+                                metrics_snapshot={"accuracy": float(acc)},
+                                description=f"Model accuracy {acc:.3f} < {self.accuracy_threshold}"
+                            )
+                            self.producer.send('alerts', alert.to_json())
+                            self.db.create_incident(
+                                incident_type=IncidentType.PERF_DROP,
+                                metrics_snapshot=alert.metrics_snapshot,
+                                description=alert.description
+                            )
+            
+            elif topic == 'decisions':
+                decision = Decision.from_json(message)
+                if decision.confidence > 0:
+                    self.feature_distributions.append(decision.confidence)
                     
-                    if message.topic == 'feedback':
-                        actual = event.get('actual_outcome')
-                        predicted = event.get('predicted_outcome')
-                        if actual is not None and predicted is not None:
-                            is_correct = (actual == predicted)
-                            self.accuracy_window.append(1 if is_correct else 0)
-                            self.check_performance_drop()
-                    
-                    if 'risk_score' in event:
-                        self.feature_distributions.append(event['risk_score'])
-                        self.check_data_drift()
-                    
-                except Exception as e:
-                    logger.error(f"Error processing decision/feedback: {e}")
-        except KeyboardInterrupt:
-            logger.info("Shutting down decision monitoring")
-    
+                    if len(self.feature_distributions) >= 500:
+                        recent = list(self.feature_distributions)[-200:]
+                        reference = list(self.feature_distributions)[:200]
+                        drift = abs(np.mean(recent) - np.mean(reference)) / (np.mean(reference) + 1e-6)
+                        
+                        if drift > 0.2:
+                            existing = self.db.get_open_incident_by_type(IncidentType.DATA_DRIFT)
+                            if not existing:
+                                alert = Alert(
+                                    alert_id=f"ALR-DRIFT-{int(time.time())}",
+                                    alert_type=IncidentType.DATA_DRIFT,
+                                    severity="MEDIUM",
+                                    timestamp=datetime.utcnow().isoformat(),
+                                    metrics_snapshot={"drift_score": float(drift)},
+                                    description=f"Data drift detected: {drift:.3f}"
+                                )
+                                self.producer.send('alerts', alert.to_json())
+                                self.db.create_incident(
+                                    incident_type=IncidentType.DATA_DRIFT,
+                                    metrics_snapshot=alert.metrics_snapshot,
+                                    description=alert.description
+                                )
+        except Exception as e:
+            logger.error(f"Error processing decision/feedback: {e}")
+
+    async def heartbeat_loop(self):
+        while self.running:
+            try:
+                process = psutil.Process()
+                metric = AgentMetric(
+                    agent="MonitoringAgent",
+                    status="OK",
+                    latency_ms=self.last_latency,
+                    timestamp=datetime.utcnow().isoformat(),
+                    cpu_percent=process.cpu_percent(),
+                    memory_mb=process.memory_info().rss / 1024 / 1024,
+                    events_processed=self.events_processed
+                )
+                self.producer.send('agent-metrics', metric.to_json())
+                
+                self.db.update_agent_health(
+                    agent_name="MonitoringAgent",
+                    status="OK",
+                    latency_ms=metric.latency_ms,
+                    cpu_percent=metric.cpu_percent,
+                    memory_mb=metric.memory_mb,
+                    events_processed=self.events_processed
+                )
+            except Exception as e:
+                logger.error(f"Heartbeat error: {e}")
+            await asyncio.sleep(self.config.heartbeat_interval_seconds)
+
     async def run(self):
-        """Run both monitoring loops"""
-        metrics_task = asyncio.create_task(self.monitor_metrics())
-        decisions_task = asyncio.create_task(self.monitor_decisions())
+        heartbeat_task = asyncio.create_task(self.heartbeat_loop())
         
-        await asyncio.gather(metrics_task, decisions_task)
+        self.metrics_consumer = create_consumer(
+            self.config.kafka,
+            ['agent-metrics'],
+            'monitoring-metrics-group',
+            self.process_metric
+        )
+        
+        self.decisions_consumer = create_consumer(
+            self.config.kafka,
+            ['decisions', 'feedback'],
+            'monitoring-decisions-group',
+            self.process_decision_feedback
+        )
+        
+        logger.info("MonitoringAgent starting consumers...")
+        try:
+            # Run consumers in separate threads since they are blocking
+            loop = asyncio.get_event_loop()
+            await asyncio.gather(
+                loop.run_in_executor(None, self.metrics_consumer.start),
+                loop.run_in_executor(None, self.decisions_consumer.start)
+            )
+        finally:
+            self.cleanup()
+            heartbeat_task.cancel()
+
+    def cleanup(self):
+        logger.info("Cleaning up resources...")
+        self.running = False
+        if hasattr(self, 'metrics_consumer'): self.metrics_consumer.close()
+        if hasattr(self, 'decisions_consumer'): self.decisions_consumer.close()
+        if hasattr(self, 'producer'):
+            self.producer.flush()
+            self.producer.close()
+        logger.info("Shutdown complete")
 
 if __name__ == "__main__":
     agent = MonitoringAgent()

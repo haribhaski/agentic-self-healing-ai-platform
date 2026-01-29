@@ -30,14 +30,25 @@ export function SelfHealingStatus() {
         eventSource.close();
       }
 
-      eventSource = new EventSource('/api/logs');
+      eventSource = new EventSource('/api/agent-logs');
 
       eventSource.onmessage = (event) => {
         try {
-          // Ignore heartbeats (lines starting with :)
           if (!event.data) return;
           
-          const rawData = JSON.parse(event.data);
+          let rawData;
+          try {
+            rawData = JSON.parse(event.data);
+          } catch (e) {
+            // Handle non-JSON logs gracefully
+            rawData = {
+              timestamp: new Date().toISOString(),
+              level: 'info',
+              message: event.data,
+              agent: 'system'
+            };
+          }
+
           const newLog: LogEntry = {
             time: new Date(rawData.timestamp).toLocaleTimeString(),
             type: rawData.level?.toLowerCase() === 'error' ? 'error' : 'info',

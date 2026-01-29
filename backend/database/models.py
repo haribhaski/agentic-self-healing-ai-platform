@@ -88,9 +88,29 @@ class DriftMetric(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 def init_db(connection_string: str):
-    engine = create_engine(connection_string)
-    Base.metadata.create_all(engine)
-    return engine
+    import time
+    from sqlalchemy.exc import OperationalError
+    
+    # Retry logic for database connection
+    max_retries = 10
+    retry_delay = 1
+    
+    for i in range(max_retries):
+        try:
+            engine = create_engine(connection_string, pool_pre_ping=True)
+            # Test connection
+            with engine.connect() as conn:
+                pass
+            Base.metadata.create_all(engine)
+            return engine
+        except OperationalError as e:
+            if i == max_retries - 1:
+                raise
+            print(f"Database connection failed, retrying in {retry_delay}s... ({i+1}/{max_retries})")
+            time.sleep(retry_delay)
+            retry_delay *= 2 # Exponential backoff
+    
+    return create_engine(connection_string)
 
 def get_session(engine):
     Session = sessionmaker(bind=engine)

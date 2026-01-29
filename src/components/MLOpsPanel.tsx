@@ -3,31 +3,80 @@
 import { motion } from "framer-motion";
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, AreaChart, Area } from "recharts";
 import { TrendingUp, AlertCircle, CheckCircle2, Layers, GitBranch, RefreshCcw } from "lucide-react";
+import { useEffect, useState } from "react";
 
-const driftData = [
-  { time: "00:00", drift: 0.12 },
-  { time: "04:00", drift: 0.15 },
-  { time: "08:00", drift: 0.18 },
-  { time: "12:00", drift: 0.22 },
-  { time: "16:00", drift: 0.19 },
-  { time: "20:00", drift: 0.16 },
-  { time: "24:00", drift: 0.14 },
-];
+interface Metric {
+  name: string;
+  value: string | number;
+  trend: string;
+  status: string;
+}
 
-const modelMetrics = [
-  { name: "Accuracy", value: 94.2, trend: "+1.2%", status: "good" },
-  { name: "Latency (p99)", value: "45ms", trend: "-5ms", status: "good" },
-  { name: "Drift Score", value: 0.14, trend: "-0.08", status: "good" },
-  { name: "Data Quality", value: 98.7, trend: "+0.3%", status: "good" },
-];
+interface DriftPoint {
+  time: string;
+  drift: number;
+}
 
-const recentExperiments = [
-  { id: "exp-2847", model: "decision-agent-v3", status: "completed", metric: "0.942" },
-  { id: "exp-2846", model: "anomaly-detector-v2", status: "running", metric: "---" },
-  { id: "exp-2845", model: "planner-agent-v4", status: "completed", metric: "0.918" },
-];
+interface Experiment {
+  id: string;
+  model: string;
+  status: string;
+  metric: string;
+}
 
 export function MLOpsPanel() {
+  const [modelMetrics, setModelMetrics] = useState<Metric[]>([
+    { name: "Accuracy", value: 94.2, trend: "+1.2%", status: "good" },
+    { name: "Latency (p99)", value: "45ms", trend: "-5ms", status: "good" },
+    { name: "Drift Score", value: 0.14, trend: "-0.08", status: "good" },
+    { name: "Data Quality", value: 98.7, trend: "+0.3%", status: "good" },
+  ]);
+
+  const [driftData, setDriftData] = useState<DriftPoint[]>([
+    { time: "00:00", drift: 0.12 },
+    { time: "04:00", drift: 0.15 },
+    { time: "08:00", drift: 0.18 },
+    { time: "12:00", drift: 0.22 },
+    { time: "16:00", drift: 0.19 },
+    { time: "20:00", drift: 0.16 },
+    { time: "24:00", drift: 0.14 },
+  ]);
+
+  const [recentExperiments, setRecentExperiments] = useState<Experiment[]>([
+    { id: "exp-2847", model: "decision-agent-v3", status: "completed", metric: "0.942" },
+    { id: "exp-2846", model: "anomaly-detector-v2", status: "running", metric: "---" },
+    { id: "exp-2845", model: "planner-agent-v4", status: "completed", metric: "0.918" },
+  ]);
+
+  const [isLive, setIsLive] = useState(false);
+
+  useEffect(() => {
+    const eventSource = new EventSource('/api/mlops-metrics');
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'mlops_update') {
+          setModelMetrics(data.metrics);
+          setDriftData(data.drift_data);
+          setRecentExperiments(data.experiments);
+          setIsLive(true);
+        }
+      } catch (err) {
+        console.error('Failed to parse mlops metrics:', err);
+      }
+    };
+
+    eventSource.onerror = (err) => {
+      console.error('MLOps EventSource failed:', err);
+      eventSource.close();
+    };
+
+    return () => {
+      eventSource.close();
+    };
+  }, []);
+
   return (
     <div className="glass-card rounded-xl p-6">
       <div className="flex items-center justify-between mb-6">
@@ -36,13 +85,29 @@ export function MLOpsPanel() {
             <Layers className="w-5 h-5 text-[#7c3aed]" />
           </div>
           <div>
-            <h3 className="font-display text-lg font-semibold text-white">MLOps Dashboard</h3>
+            <div className="flex items-center gap-2">
+              <h3 className="font-display text-lg font-semibold text-white">MLOps Dashboard</h3>
+              {isLive && (
+                <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-[#10b981]/10 border border-[#10b981]/20">
+                  <div className="w-1.5 h-1.5 rounded-full bg-[#10b981] animate-pulse" />
+                  <span className="text-[10px] font-bold text-[#10b981] uppercase tracking-wider">Live</span>
+                </div>
+              )}
+            </div>
             <p className="text-sm text-[#6b6b80]">MLflow + Evidently AI</p>
           </div>
         </div>
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#10b981]/20 text-[#10b981] text-xs">
-          <CheckCircle2 className="w-3.5 h-3.5" />
-          Models Healthy
+        <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs transition-colors ${
+          modelMetrics.every(m => m.status === 'good') 
+            ? 'bg-[#10b981]/20 text-[#10b981]' 
+            : 'bg-[#ff4757]/20 text-[#ff4757]'
+        }`}>
+          {modelMetrics.every(m => m.status === 'good') ? (
+            <CheckCircle2 className="w-3.5 h-3.5" />
+          ) : (
+            <AlertCircle className="w-3.5 h-3.5" />
+          )}
+          {modelMetrics.every(m => m.status === 'good') ? 'Models Healthy' : 'Issues Detected'}
         </div>
       </div>
 
@@ -57,11 +122,12 @@ export function MLOpsPanel() {
           >
             <p className="text-xs text-[#6b6b80] mb-1">{metric.name}</p>
             <div className="flex items-end justify-between">
-              <span className="text-xl font-mono font-bold text-white">
-                {typeof metric.value === "number" && metric.name.includes("%")
-                  ? `${metric.value}%`
-                  : metric.value}
-              </span>
+                <span className="text-xl font-mono font-bold text-white">
+                  {typeof metric.value === "number" && (metric.name.includes("%") || metric.name === "Accuracy" || metric.name === "Data Quality")
+                    ? `${metric.value}%`
+                    : metric.value}
+                </span>
+
               <span className="text-xs text-[#10b981]">{metric.trend}</span>
             </div>
           </motion.div>
