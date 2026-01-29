@@ -43,15 +43,24 @@ class HealingAgent:
     
     def handle_latency_breach(self, alert):
         """Playbook: Switch to SAFE_MODE (rule-based)"""
-        incident_id = self.db.get_open_incident_by_type("LATENCY_SLO_BREACH")
+        incident_id = alert.get('incident_id') or self.db.get_open_incident_by_type("LATENCY_SLO_BREACH")
         
+        if not incident_id:
+            logger.warning("No incident ID found for alert, creating one")
+            incident = self.db.create_incident(
+                incident_type="LATENCY_SLO_BREACH",
+                metrics_snapshot=alert.get('metrics', {}),
+                description=alert.get('description', "Auto-generated from alert")
+            )
+            incident_id = incident.incident_id
+
         proposed_action = {
             "action_type": "ENABLE_SAFE_MODE",
             "config_changes": {
                 "safe_mode": True,
                 "reason": "Latency breach - switching to rule-based decisions"
             },
-            "expected_outcome": "Reduce latency to < 300ms"
+            "expected_outcome": "Reduce latency"
         }
         
         policy_request = {
@@ -70,7 +79,16 @@ class HealingAgent:
     
     def handle_performance_drop(self, alert):
         """Playbook: Rollback to previous model version"""
-        incident_id = self.db.get_open_incident_by_type("PERF_DROP")
+        incident_id = alert.get('incident_id') or self.db.get_open_incident_by_type("PERF_DROP")
+
+        if not incident_id:
+            logger.warning("No incident ID found for alert, creating one")
+            incident = self.db.create_incident(
+                incident_type="PERF_DROP",
+                metrics_snapshot=alert.get('metrics', {}),
+                description=alert.get('description', "Auto-generated from alert")
+            )
+            incident_id = incident.incident_id
         
         proposed_action = {
             "action_type": "ROLLBACK_MODEL",
@@ -78,7 +96,7 @@ class HealingAgent:
                 "model_version": "previous",
                 "reason": "Performance drop detected"
             },
-            "expected_outcome": "Restore accuracy > 0.8"
+            "expected_outcome": "Restore accuracy"
         }
         
         policy_request = {
@@ -97,7 +115,16 @@ class HealingAgent:
     
     def handle_data_drift(self, alert):
         """Playbook: Trigger retraining"""
-        incident_id = self.db.get_open_incident_by_type("DATA_DRIFT")
+        incident_id = alert.get('incident_id') or self.db.get_open_incident_by_type("DATA_DRIFT")
+
+        if not incident_id:
+            logger.warning("No incident ID found for alert, creating one")
+            incident = self.db.create_incident(
+                incident_type="DATA_DRIFT",
+                metrics_snapshot=alert.get('metrics', {}),
+                description=alert.get('description', "Auto-generated from alert")
+            )
+            incident_id = incident.incident_id
         
         proposed_action = {
             "action_type": "TRIGGER_RETRAINING",
@@ -105,7 +132,7 @@ class HealingAgent:
                 "retrain": True,
                 "reason": "Data drift detected"
             },
-            "expected_outcome": "Update model with new data distribution"
+            "expected_outcome": "Update model distribution"
         }
         
         policy_request = {
@@ -124,7 +151,16 @@ class HealingAgent:
     
     def handle_agent_down(self, alert):
         """Playbook: Request agent restart"""
-        incident_id = self.db.get_open_incident_by_type("AGENT_DOWN")
+        incident_id = alert.get('incident_id') or self.db.get_open_incident_by_type("AGENT_DOWN")
+
+        if not incident_id:
+            logger.warning("No incident ID found for alert, creating one")
+            incident = self.db.create_incident(
+                incident_type="AGENT_DOWN",
+                metrics_snapshot=alert.get('metrics', {}),
+                description=alert.get('description', "Auto-generated from alert")
+            )
+            incident_id = incident.incident_id
         
         proposed_action = {
             "action_type": "RESTART_AGENT",
@@ -133,7 +169,7 @@ class HealingAgent:
                 "restart": True,
                 "reason": "Agent heartbeat missing"
             },
-            "expected_outcome": "Agent resumes heartbeat"
+            "expected_outcome": "Restore heartbeat"
         }
         
         policy_request = {

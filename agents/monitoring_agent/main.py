@@ -45,16 +45,19 @@ class MonitoringAgent:
         self.accuracy_window = deque(maxlen=200)
         self.feature_distributions = deque(maxlen=1000)
         self.heartbeats = {}
-        self.latency_threshold_ms = 300
-        self.accuracy_threshold = 0.8
-        self.heartbeat_timeout_sec = 30
+        self.latency_threshold_ms = 500
+        self.accuracy_threshold = 0.7
+        self.heartbeat_timeout_sec = 45
     
     def check_heartbeats(self):
         """Check for missing agent heartbeats"""
         now = datetime.utcnow()
         for agent, last_seen in self.heartbeats.items():
             if (now - last_seen).total_seconds() > self.heartbeat_timeout_sec:
+                import uuid
+                incident_id = str(uuid.uuid4())
                 alert = {
+                    "incident_id": incident_id,
                     "alert_type": "AGENT_DOWN",
                     "agent": agent,
                     "severity": "CRITICAL",
@@ -65,6 +68,7 @@ class MonitoringAgent:
                 self.producer.send('alerts', alert)
                 logger.warning(f"ALERT: {agent} is DOWN")
                 self.db.create_incident(
+                    incident_id=incident_id,
                     incident_type="AGENT_DOWN",
                     metrics_snapshot=alert["metrics"],
                     description=alert["description"]
@@ -79,7 +83,10 @@ class MonitoringAgent:
         p95_latency = np.percentile(self.latency_window, 95)
         
         if median_latency > self.latency_threshold_ms:
+            import uuid
+            incident_id = str(uuid.uuid4())
             alert = {
+                "incident_id": incident_id,
                 "alert_type": "LATENCY_SLO_BREACH",
                 "severity": "HIGH",
                 "description": f"Median latency {median_latency:.1f}ms > {self.latency_threshold_ms}ms",
@@ -93,6 +100,7 @@ class MonitoringAgent:
             self.producer.send('alerts', alert)
             logger.warning(f"ALERT: Latency SLO breach - {median_latency:.1f}ms")
             self.db.create_incident(
+                incident_id=incident_id,
                 incident_type="LATENCY_SLO_BREACH",
                 metrics_snapshot=alert["metrics"],
                 description=alert["description"]
@@ -106,7 +114,10 @@ class MonitoringAgent:
         recent_accuracy = np.mean(self.accuracy_window)
         
         if recent_accuracy < self.accuracy_threshold:
+            import uuid
+            incident_id = str(uuid.uuid4())
             alert = {
+                "incident_id": incident_id,
                 "alert_type": "PERF_DROP",
                 "severity": "HIGH",
                 "description": f"Model accuracy {recent_accuracy:.3f} < {self.accuracy_threshold}",
@@ -120,6 +131,7 @@ class MonitoringAgent:
             self.producer.send('alerts', alert)
             logger.warning(f"ALERT: Performance drop - accuracy {recent_accuracy:.3f}")
             self.db.create_incident(
+                incident_id=incident_id,
                 incident_type="PERF_DROP",
                 metrics_snapshot=alert["metrics"],
                 description=alert["description"]
@@ -138,8 +150,11 @@ class MonitoringAgent:
         
         drift_score = abs(recent_mean - ref_mean) / (ref_mean + 1e-6)
         
-        if drift_score > 0.2:
+        if drift_score > 0.3:
+            import uuid
+            incident_id = str(uuid.uuid4())
             alert = {
+                "incident_id": incident_id,
                 "alert_type": "DATA_DRIFT",
                 "severity": "MEDIUM",
                 "description": f"Data drift detected: {drift_score:.3f}",
@@ -153,6 +168,7 @@ class MonitoringAgent:
             self.producer.send('alerts', alert)
             logger.warning(f"ALERT: Data drift detected - {drift_score:.3f}")
             self.db.create_incident(
+                incident_id=incident_id,
                 incident_type="DATA_DRIFT",
                 metrics_snapshot=alert["metrics"],
                 description=alert["description"]

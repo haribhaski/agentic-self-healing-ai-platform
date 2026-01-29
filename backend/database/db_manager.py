@@ -20,13 +20,16 @@ class DatabaseManager:
     
     def create_incident(
         self,
-        incident_id: str,
         incident_type: IncidentType,
         metrics_snapshot: Dict[str, Any],
-        description: str
+        description: str,
+        incident_id: Optional[str] = None
     ) -> Incident:
         session = self.get_session()
         try:
+            if not incident_id:
+                import uuid
+                incident_id = str(uuid.uuid4())
             incident = Incident(
                 incident_id=incident_id,
                 type=incident_type,
@@ -45,6 +48,49 @@ class DatabaseManager:
             raise
         finally:
             session.close()
+    
+    def get_open_incident_by_type(self, incident_type: str) -> Optional[str]:
+        session = self.get_session()
+        try:
+            incident = session.query(Incident).filter(
+                Incident.type == incident_type,
+                Incident.status == IncidentStatus.OPEN
+            ).order_by(Incident.detected_at.desc()).first()
+            return incident.incident_id if incident else None
+        finally:
+            session.close()
+
+    def log_healing_action(
+        self,
+        incident_id: str,
+        action_type: str,
+        action_details: Dict[str, Any],
+        agl_decision: str
+    ):
+        import uuid
+        return self.create_healing_action(
+            action_id=str(uuid.uuid4()),
+            incident_id=incident_id,
+            proposed_action=action_details,
+            agl_decision=agl_decision,
+            approved_action=action_details if agl_decision == "APPROVE" else None
+        )
+
+    def store_memory(
+        self,
+        incident_type: str,
+        action_taken: Dict[str, Any],
+        outcome: str,
+        metadata: Dict[str, Any]
+    ):
+        import uuid
+        return self.create_memory_chunk(
+            memory_id=str(uuid.uuid4()),
+            incident_type=incident_type,
+            incident_summary=f"Automated action for {incident_type}",
+            action_taken=action_taken,
+            outcome=outcome
+        )
     
     def update_incident_status(
         self,
