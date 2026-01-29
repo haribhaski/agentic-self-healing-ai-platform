@@ -9,24 +9,26 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
 from common.config import Config
 from backend.database.db_manager import DatabaseManager
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("HealingAgent")
+from common.logger import setup_logger
+from common.config import config
+
+logger = setup_logger("HealingAgent", config.kafka)
 
 class HealingAgent:
     def __init__(self):
-        self.config = Config()
-        self.db = DatabaseManager()
+        self.config = config
+        self.db = DatabaseManager(self.config.database.connection_string)
         
         self.consumer = KafkaConsumer(
             'alerts',
             'policy-decisions',
-            bootstrap_servers=self.config.KAFKA_BOOTSTRAP_SERVERS,
+            bootstrap_servers=self.config.kafka.bootstrap_servers,
             value_deserializer=lambda v: json.loads(v.decode('utf-8')),
             group_id='healing-agent-group'
         )
         
         self.producer = KafkaProducer(
-            bootstrap_servers=self.config.KAFKA_BOOTSTRAP_SERVERS,
+            bootstrap_servers=self.config.kafka.bootstrap_servers,
             value_serializer=lambda v: json.dumps(v).encode('utf-8')
         )
         

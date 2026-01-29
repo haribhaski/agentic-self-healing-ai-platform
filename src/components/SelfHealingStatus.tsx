@@ -2,33 +2,15 @@
 
 import { motion } from "framer-motion";
 import { Heart, Activity, Zap, Shield, CheckCircle, AlertTriangle, XCircle, Clock } from "lucide-react";
+import { useEffect, useState } from "react";
 
-const healingEvents = [
-  {
-    time: "2 min ago",
-    type: "auto-remediated",
-    message: "High latency detected → Auto-scaled consumer group",
-    status: "success",
-  },
-  {
-    time: "15 min ago",
-    type: "drift-detected",
-    message: "Model drift threshold breach → Triggered retraining",
-    status: "success",
-  },
-  {
-    time: "1 hour ago",
-    type: "anomaly",
-    message: "Unusual error rate in payment-service → Rolled back deployment",
-    status: "success",
-  },
-  {
-    time: "3 hours ago",
-    type: "policy-violation",
-    message: "Resource quota exceeded → Adjusted allocation",
-    status: "warning",
-  },
-];
+interface LogEntry {
+  time: string;
+  type: string;
+  message: string;
+  status: string;
+  agent?: string;
+}
 
 const healthMetrics = [
   { label: "System Health", value: 98.5, color: "#10b981" },
@@ -37,6 +19,56 @@ const healthMetrics = [
 ];
 
 export function SelfHealingStatus() {
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+
+  useEffect(() => {
+    let eventSource: EventSource | null = null;
+    let reconnectTimeout: NodeJS.Timeout;
+
+    const connect = () => {
+      if (eventSource) {
+        eventSource.close();
+      }
+
+      eventSource = new EventSource('/api/logs');
+
+      eventSource.onmessage = (event) => {
+        try {
+          // Ignore heartbeats (lines starting with :)
+          if (!event.data) return;
+          
+          const rawData = JSON.parse(event.data);
+          const newLog: LogEntry = {
+            time: new Date(rawData.timestamp).toLocaleTimeString(),
+            type: rawData.level?.toLowerCase() === 'error' ? 'error' : 'info',
+            message: rawData.message,
+            status: rawData.level?.toLowerCase() === 'error' ? 'error' : 'success',
+            agent: rawData.agent,
+          };
+          setLogs((prev) => [newLog, ...prev].slice(0, 50));
+        } catch (error) {
+          console.error('Failed to parse log:', error);
+        }
+      };
+
+      eventSource.onerror = (error) => {
+        console.error('SSE connection failed, reconnecting...', error);
+        eventSource?.close();
+        // Reconnect after 3 seconds
+        reconnectTimeout = setTimeout(connect, 3000);
+      };
+    };
+
+    connect();
+
+    return () => {
+      if (eventSource) eventSource.close();
+      clearTimeout(reconnectTimeout);
+    };
+  }, []);
+
+  const healingEvents = logs.slice(0, 6);
+
   return (
     <div className="glass-card rounded-xl p-6 glow-border-green">
       <div className="flex items-center justify-between mb-6">

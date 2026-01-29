@@ -11,17 +11,19 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
 from common.config import Config
 from backend.database.db_manager import DatabaseManager
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("MonitoringAgent")
+from common.logger import setup_logger
+from common.config import config
+
+logger = setup_logger("MonitoringAgent", config.kafka)
 
 class MonitoringAgent:
     def __init__(self):
-        self.config = Config()
-        self.db = DatabaseManager()
+        self.config = config
+        self.db = DatabaseManager(self.config.database.connection_string)
         
         self.metrics_consumer = KafkaConsumer(
             'agent-metrics',
-            bootstrap_servers=self.config.KAFKA_BOOTSTRAP_SERVERS,
+            bootstrap_servers=self.config.kafka.bootstrap_servers,
             value_deserializer=lambda v: json.loads(v.decode('utf-8')),
             group_id='monitoring-agent-metrics'
         )
@@ -29,13 +31,13 @@ class MonitoringAgent:
         self.decisions_consumer = KafkaConsumer(
             'decisions',
             'feedback',
-            bootstrap_servers=self.config.KAFKA_BOOTSTRAP_SERVERS,
+            bootstrap_servers=self.config.kafka.bootstrap_servers,
             value_deserializer=lambda v: json.loads(v.decode('utf-8')),
             group_id='monitoring-agent-decisions'
         )
         
         self.producer = KafkaProducer(
-            bootstrap_servers=self.config.KAFKA_BOOTSTRAP_SERVERS,
+            bootstrap_servers=self.config.kafka.bootstrap_servers,
             value_serializer=lambda v: json.dumps(v).encode('utf-8')
         )
         
@@ -190,9 +192,12 @@ class MonitoringAgent:
                     event = message.value
                     
                     if message.topic == 'feedback':
-                        is_correct = event.get('is_correct', True)
-                        self.accuracy_window.append(1 if is_correct else 0)
-                        self.check_performance_drop()
+                        actual = event.get('actual_outcome')
+                        predicted = event.get('predicted_outcome')
+                        if actual is not None and predicted is not None:
+                            is_correct = (actual == predicted)
+                            self.accuracy_window.append(1 if is_correct else 0)
+                            self.check_performance_drop()
                     
                     if 'risk_score' in event:
                         self.feature_distributions.append(event['risk_score'])

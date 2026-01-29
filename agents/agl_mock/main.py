@@ -3,23 +3,28 @@ import json
 import logging
 from datetime import datetime
 from kafka import KafkaConsumer, KafkaProducer
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
+from common.logger import setup_logger
+from common.config import config
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("AGL_Mock")
+logger = setup_logger("AGL_Mock", config.kafka)
 
 class AGLMock:
     """Mock AGL (Agentic Governance Layer) for auto-approving healing actions"""
     
     def __init__(self):
+        self.config = config
         self.consumer = KafkaConsumer(
             'policy-requests',
-            bootstrap_servers='localhost:9092',
+            bootstrap_servers=self.config.kafka.bootstrap_servers,
             value_deserializer=lambda v: json.loads(v.decode('utf-8')),
             group_id='agl-mock-group'
         )
         
         self.producer = KafkaProducer(
-            bootstrap_servers='localhost:9092',
+            bootstrap_servers=self.config.kafka.bootstrap_servers,
             value_serializer=lambda v: json.dumps(v).encode('utf-8')
         )
         

@@ -13,8 +13,10 @@ import random
 from datetime import datetime
 import psutil
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from common.logger import setup_logger
+from common.config import config
+
+logger = setup_logger("FeatureAgent", config.kafka)
 
 class FeatureAgent:
     def __init__(self):

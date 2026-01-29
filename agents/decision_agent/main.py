@@ -8,27 +8,29 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
 from common.config import Config
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("DecisionAgent")
+from common.logger import setup_logger
+from common.config import config
+
+logger = setup_logger("DecisionAgent", config.kafka)
 
 class DecisionAgent:
     def __init__(self):
-        self.config = Config()
+        self.config = config
         self.consumer = KafkaConsumer(
             'predictions',
-            bootstrap_servers=self.config.KAFKA_BOOTSTRAP_SERVERS,
+            bootstrap_servers=self.config.kafka.bootstrap_servers,
             value_deserializer=lambda v: json.loads(v.decode('utf-8')),
             group_id='decision-agent-group'
         )
         self.producer = KafkaProducer(
-            bootstrap_servers=self.config.KAFKA_BOOTSTRAP_SERVERS,
+            bootstrap_servers=self.config.kafka.bootstrap_servers,
             value_serializer=lambda v: json.dumps(v).encode('utf-8')
         )
     
-    def make_decision(self, prediction):
+    def make_decision(self, prediction_data):
         """Make business decision based on prediction"""
-        risk_score = prediction['risk_score']
-        risk_class = prediction['risk_class']
+        risk_score = prediction_data.get('confidence', 0.0)
+        risk_class = prediction_data.get('prediction', 'UNKNOWN')
         
         if risk_class == "HIGH_RISK":
             action = "REJECT"
@@ -60,25 +62,23 @@ class DecisionAgent:
         try:
             for message in self.consumer:
                 try:
-                    prediction = message.value
-                    event_id = prediction['event_id']
-                    trace_id = prediction.get('trace_id', event_id)
+                    prediction_data = message.value
+                    trace_id = prediction_data.get('trace_id', 'UNKNOWN')
                     
-                    action, reason = self.make_decision(prediction)
+                    action, reason = self.make_decision(prediction_data)
                     
                     decision_event = {
-                        "event_id": event_id,
                         "trace_id": trace_id,
                         "action": action,
                         "reason": reason,
-                        "risk_score": prediction['risk_score'],
-                        "model_version": prediction['model_version'],
+                        "risk_score": prediction_data.get('confidence', 0.0),
+                        "model_version": prediction_data.get('model_version', 'UNKNOWN'),
                         "timestamp": datetime.utcnow().isoformat()
                     }
                     
                     self.producer.send('decisions', decision_event)
                     
-                    logger.info(f"Decision: {event_id} -> {action} ({reason})")
+                    logger.info(f"Decision: {trace_id} -> {action} ({reason})")
                     
                 except Exception as e:
                     logger.error(f"Error processing prediction: {e}")

@@ -10,30 +10,35 @@ import mlflow.sklearn
 import numpy as np
 import sys
 import os
-sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
-from common.config import Config
-from common.schemas import FeatureEvent, PredictionEvent
+import uuid
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("ModelAgent")
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(ROOT_DIR)
+
+from dataclasses import asdict
+from common.config import config
+from common.schemas import FeatureVector, Prediction
+from common.logger import setup_logger
+
+logger = setup_logger("ModelAgent", config.kafka)
 
 class ModelAgent:
     def __init__(self):
-        self.config = Config()
+        self.config = config
         self.consumer = KafkaConsumer(
-            'feature-vectors',
-            bootstrap_servers=self.config.KAFKA_BOOTSTRAP_SERVERS,
+            'features',
+            bootstrap_servers=self.config.kafka.bootstrap_servers,
             value_deserializer=lambda v: json.loads(v.decode('utf-8')),
             group_id='model-agent-group'
         )
         self.producer = KafkaProducer(
-            bootstrap_servers=self.config.KAFKA_BOOTSTRAP_SERVERS,
+            bootstrap_servers=self.config.kafka.bootstrap_servers,
             value_serializer=lambda v: json.dumps(v).encode('utf-8')
         )
         self.model = None
         self.model_version = None
         self.safe_mode = False
-        self.mlflow_uri = self.config.MLFLOW_TRACKING_URI
+        self.mlflow_uri = self.config.mlflow.tracking_uri
         mlflow.set_tracking_uri(self.mlflow_uri)
         self.load_model()
         
@@ -60,9 +65,17 @@ class ModelAgent:
     
     def rule_based_prediction(self, features):
         """Fallback rule-based decision for safe mode"""
-        if features[0] < 600:  # credit_score
+        # Handle dict or list features
+        if isinstance(features, dict):
+            val = features.get('feature_1', 0)
+        else:
+            val = features[0] if len(features) > 0 else 0
+            
+        if val > 1500:  # High transaction value
+            return 0.95, "HIGH_RISK"
+        elif val > 1000:
             return 0.8, "HIGH_RISK"
-        elif features[0] < 700:
+        elif val > 500:
             return 0.5, "MEDIUM_RISK"
         else:
             return 0.2, "LOW_RISK"
@@ -75,7 +88,12 @@ class ModelAgent:
             risk_score, risk_class = self.rule_based_prediction(features)
         else:
             try:
-                X = np.array(features).reshape(1, -1)
+                # Convert dict to array if needed
+                if isinstance(features, dict):
+                    X = np.array(list(features.values())).reshape(1, -1)
+                else:
+                    X = np.array(features).reshape(1, -1)
+                
                 risk_score = float(self.model.predict_proba(X)[0][1])
                 risk_class = "HIGH_RISK" if risk_score > 0.7 else "MEDIUM_RISK" if risk_score > 0.4 else "LOW_RISK"
             except Exception as e:
@@ -98,32 +116,35 @@ class ModelAgent:
     
     async def process_features(self):
         """Process feature vectors and make predictions"""
-        logger.info("ModelAgent started, consuming from feature-vectors")
+        logger.info("ModelAgent started, consuming from features")
         
         heartbeat_task = asyncio.create_task(self.heartbeat_loop())
         
         try:
             for message in self.consumer:
                 try:
-                    feature_event = message.value
-                    event_id = feature_event['event_id']
-                    features = feature_event['features']
+                    feature_data = message.value
+                    if isinstance(feature_data, str):
+                        feature_data = json.loads(feature_data)
+                    
+                    trace_id = feature_data.get('trace_id', str(uuid.uuid4()))
+                    features = feature_data.get('features', {})
                     
                     risk_score, risk_class, inference_time = self.predict(features)
                     
-                    prediction_event = {
-                        "event_id": event_id,
-                        "trace_id": feature_event.get('trace_id', event_id),
-                        "risk_score": risk_score,
-                        "risk_class": risk_class,
-                        "model_version": self.model_version or "RULES",
-                        "inference_time_ms": inference_time,
-                        "timestamp": datetime.utcnow().isoformat()
-                    }
+                    prediction = Prediction(
+                        trace_id=trace_id,
+                        timestamp=datetime.utcnow().isoformat(),
+                        model_version=self.model_version or "RULES",
+                        prediction=risk_class,
+                        confidence=risk_score,
+                        latency_ms=inference_time,
+                        metadata={"features": features}
+                    )
                     
-                    self.producer.send('predictions', prediction_event)
+                    self.producer.send('predictions', asdict(prediction))
                     
-                    logger.info(f"Prediction: {event_id} -> {risk_class} ({risk_score:.3f}) in {inference_time:.1f}ms")
+                    logger.info(f"Prediction: {trace_id} -> {risk_class} ({risk_score:.3f}) in {inference_time:.1f}ms")
                     
                 except Exception as e:
                     logger.error(f"Error processing feature: {e}")

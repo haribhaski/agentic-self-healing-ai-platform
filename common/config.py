@@ -4,7 +4,7 @@ from typing import Optional
 
 @dataclass
 class KafkaConfig:
-    bootstrap_servers: str = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:29092")
+    bootstrap_servers: str = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "127.0.0.1:29092")
     auto_offset_reset: str = "latest"
     enable_auto_commit: bool = True
     group_id_prefix: str = "agentic-platform"
@@ -12,7 +12,7 @@ class KafkaConfig:
 @dataclass
 class DatabaseConfig:
     host: str = os.getenv("DB_HOST", "localhost")
-    port: int = int(os.getenv("DB_PORT", "5432"))
+    port: int = int(os.getenv("DB_PORT", "5433"))
     user: str = os.getenv("DB_USER", "agentic_user")
     password: str = os.getenv("DB_PASSWORD", "agentic_pass")
     database: str = os.getenv("DB_NAME", "agentic_db")
@@ -23,7 +23,7 @@ class DatabaseConfig:
 
 @dataclass
 class MLflowConfig:
-    tracking_uri: str = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
+    tracking_uri: str = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5001")
     experiment_name: str = "agentic-ai-models"
     model_registry_name: str = "production-model"
 
