@@ -4,7 +4,7 @@ import { Kafka } from 'kafkajs';
 export const dynamic = 'force-dynamic';
 
 const kafka = new Kafka({
-  clientId: 'aura-web-dashboard',
+  clientId: 'aura-web-mlops',
   brokers: [process.env.KAFKA_BOOTSTRAP_SERVERS || '127.0.0.1:29092'],
   retry: {
     initialRetryTime: 100,
@@ -15,7 +15,7 @@ const kafka = new Kafka({
 export async function GET(req: NextRequest) {
   const { signal } = req;
   const consumer = kafka.consumer({ 
-    groupId: `web-logs-${Math.random().toString(36).substring(7)}`,
+    groupId: `web-mlops-${Math.random().toString(36).substring(7)}`,
     sessionTimeout: 30000,
     heartbeatInterval: 3000,
   });
@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
       
       try {
         await consumer.connect();
-        await consumer.subscribe({ topic: 'system-logs', fromBeginning: false });
+        await consumer.subscribe({ topic: 'mlops-metrics', fromBeginning: false });
 
         heartbeatInterval = setInterval(() => {
           if (isClosed) return;
@@ -55,7 +55,7 @@ export async function GET(req: NextRequest) {
           },
         });
       } catch (error) {
-        console.error('Kafka consumer error (system-logs):', error);
+        console.error('Kafka consumer error (mlops-metrics):', error);
         if (heartbeatInterval!) clearInterval(heartbeatInterval);
         isClosed = true;
       }

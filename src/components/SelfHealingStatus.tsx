@@ -30,7 +30,7 @@ export function SelfHealingStatus() {
         eventSource.close();
       }
 
-      eventSource = new EventSource('/api/agent-logs');
+      eventSource = new EventSource('/api/logs');
 
       eventSource.onmessage = (event) => {
         try {
