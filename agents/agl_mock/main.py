@@ -29,10 +29,10 @@ class AGLMock:
         )
         
         self.policies = {
-            "ENABLE_SAFE_MODE": "APPROVE",
-            "ROLLBACK_MODEL": "APPROVE",
-            "TRIGGER_RETRAINING": "APPROVE",
-            "RESTART_AGENT": "APPROVE"
+            "ENABLE_SAFE_MODE": "APPROVED",
+            "ROLLBACK_MODEL": "APPROVED",
+            "TRIGGER_RETRAINING": "APPROVED",
+            "RESTART_AGENT": "APPROVED"
         }
     
     async def process_requests(self):
@@ -47,12 +47,12 @@ class AGLMock:
                     proposed_action = request['proposed_action']
                     action_type = proposed_action['action_type']
                     
-                    decision = self.policies.get(action_type, "DENY")
+                    decision = self.policies.get(action_type, "DENIED")
                     
                     policy_decision = {
                         "incident_id": incident_id,
                         "decision": decision,
-                        "approved_action": proposed_action if decision == "APPROVE" else None,
+                        "approved_action": proposed_action if decision == "APPROVED" else None,
                         "reason": f"Auto-{decision} by AGL policy",
                         "timestamp": datetime.utcnow().isoformat()
                     }

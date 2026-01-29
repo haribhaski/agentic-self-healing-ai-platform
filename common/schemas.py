@@ -10,6 +10,7 @@ class IncidentType(str, Enum):
     LATENCY_SLO_BREACH = "LATENCY_SLO_BREACH"
     AGENT_DOWN = "AGENT_DOWN"
     FN_SPIKE = "FN_SPIKE"
+    RESTART_AGENT = "RESTART_AGENT"
 
 class IncidentStatus(str, Enum):
     OPEN = "OPEN"

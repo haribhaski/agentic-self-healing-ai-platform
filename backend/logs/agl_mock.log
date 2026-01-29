@@ -1,5 +1,1 @@
-2026-01-29 17:56:19,241 - AGL_Mock - INFO - AGL Mock started, auto-approving policy requests...
-2026-01-29 17:57:09,945 - AGL_Mock - INFO - AGL Decision: RESTART_AGENT -> APPROVE (incident 987f38f9-e6ae-4c89-9353-3bff9f956d02)
-2026-01-29 17:57:09,945 - AGL_Mock - INFO - AGL Decision: RESTART_AGENT -> APPROVE (incident 218f06f6-13f6-4241-8c4a-11c2bcad5c12)
-2026-01-29 17:57:09,948 - AGL_Mock - INFO - AGL Decision: RESTART_AGENT -> APPROVE (incident 2e42c0b7-7d06-471a-b7f3-0aa57a4e09c7)
-2026-01-29 17:57:09,949 - AGL_Mock - INFO - AGL Decision: RESTART_AGENT -> APPROVE (incident e9f16c8e-8d3a-4b51-a710-f1d2dc3a820d)
+2026-01-29 19:04:16,221 - AGL_Mock - INFO - AGL Mock started, auto-approving policy requests...
