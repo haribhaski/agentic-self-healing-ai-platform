@@ -39,9 +39,9 @@ class MonitoringAgent:
         self.accuracy_window = deque(maxlen=200)
         self.feature_distributions = deque(maxlen=1000)
         self.heartbeats = {}
-        self.latency_threshold_ms = 300
-        self.accuracy_threshold = 0.8
-        self.heartbeat_timeout_sec = 30
+        self.latency_threshold_ms = 50
+        self.accuracy_threshold = 0.99
+        self.heartbeat_timeout_sec = 10
         self.running = True
         self.events_processed = 0
         self.last_latency = 0.0
@@ -166,7 +166,7 @@ class MonitoringAgent:
                         reference = list(self.feature_distributions)[:200]
                         drift = abs(np.mean(recent) - np.mean(reference)) / (np.mean(reference) + 1e-6)
                         
-                        if drift > 0.2:
+                        if drift > 0.01:
                             existing = self.db.get_open_incident_by_type(IncidentType.DATA_DRIFT)
                             if not existing:
                                 alert = Alert(

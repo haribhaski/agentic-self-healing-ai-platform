@@ -78,11 +78,11 @@ class ModelAgent:
         else:
             val = features[0] if len(features) > 0 else 0
             
-        if val > 1500:
+        if val > 100:
             return 0.95, "HIGH_RISK"
-        elif val > 1000:
+        elif val > 50:
             return 0.8, "HIGH_RISK"
-        elif val > 500:
+        elif val > 10:
             return 0.5, "MEDIUM_RISK"
         else:
             return 0.2, "LOW_RISK"
@@ -100,7 +100,7 @@ class ModelAgent:
                     X = np.array(features).reshape(1, -1)
                 
                 risk_score = float(self.model.predict_proba(X)[0][1])
-                risk_class = "HIGH_RISK" if risk_score > 0.7 else "MEDIUM_RISK" if risk_score > 0.4 else "LOW_RISK"
+                risk_class = "HIGH_RISK" if risk_score > 0.1 else "MEDIUM_RISK" if risk_score > 0.05 else "LOW_RISK"
             except Exception as e:
                 logger.error(f"Model inference failed: {e}, falling back to rules")
                 risk_score, risk_class = self.rule_based_prediction(features)
