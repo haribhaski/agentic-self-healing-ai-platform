@@ -3,13 +3,19 @@ import json
 import logging
 import signal
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 import datetime as dt
 from collections import deque
 import numpy as np
 import sys
 import os
 import psutil
+
+# Flush log file on restart
+LOG_FILE = os.path.join(os.path.dirname(__file__), "../../backend/logs/monitoring.log")
+if os.path.exists(LOG_FILE):
+    with open(LOG_FILE, 'w') as f:
+        f.truncate(0)
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
 from common.config import config
@@ -39,6 +45,8 @@ class MonitoringAgent:
         self.running = True
         self.events_processed = 0
         self.last_latency = 0.0
+        self.process = psutil.Process()
+        self.process.cpu_percent()
         
         # Signal handling
         for sig in (signal.SIGINT, signal.SIGTERM):
@@ -105,7 +113,7 @@ class MonitoringAgent:
                             alert_id=f"ALR-LAT-{int(time.time())}",
                             alert_type=IncidentType.LATENCY_SLO_BREACH,
                             severity="HIGH",
-                            timestamp=datetime.utcnow().isoformat(),
+                            timestamp=datetime.now(timezone.utc).isoformat(),
                             metrics_snapshot={"median_latency": float(median_latency)},
                             description=f"Median latency {median_latency:.1f}ms > {self.latency_threshold_ms}ms"
                         )
@@ -117,7 +125,6 @@ class MonitoringAgent:
                         )
             
             self.last_latency = (time.time() - start_time) * 1000
-            self.events_processed += 1
         except Exception as e:
             logger.error(f"Error processing metric: {e}")
 
@@ -138,7 +145,7 @@ class MonitoringAgent:
                                 alert_id=f"ALR-PERF-{int(time.time())}",
                                 alert_type=IncidentType.PERF_DROP,
                                 severity="HIGH",
-                                timestamp=datetime.utcnow().isoformat(),
+                                timestamp=datetime.now(timezone.utc).isoformat(),
                                 metrics_snapshot={"accuracy": float(acc)},
                                 description=f"Model accuracy {acc:.3f} < {self.accuracy_threshold}"
                             )
@@ -166,7 +173,7 @@ class MonitoringAgent:
                                     alert_id=f"ALR-DRIFT-{int(time.time())}",
                                     alert_type=IncidentType.DATA_DRIFT,
                                     severity="MEDIUM",
-                                    timestamp=datetime.utcnow().isoformat(),
+                                    timestamp=datetime.now(timezone.utc).isoformat(),
                                     metrics_snapshot={"drift_score": float(drift)},
                                     description=f"Data drift detected: {drift:.3f}"
                                 )
@@ -182,14 +189,13 @@ class MonitoringAgent:
     async def heartbeat_loop(self):
         while self.running:
             try:
-                process = psutil.Process()
                 metric = AgentMetric(
                     agent="MonitoringAgent",
                     status="OK",
                     latency_ms=self.last_latency,
-                    timestamp=datetime.utcnow().isoformat(),
-                    cpu_percent=process.cpu_percent(),
-                    memory_mb=process.memory_info().rss / 1024 / 1024,
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    cpu_percent=self.process.cpu_percent(),
+                    memory_mb=self.process.memory_info().rss / 1024 / 1024,
                     events_processed=self.events_processed
                 )
                 self.producer.send('agent-metrics', metric.to_json())
@@ -205,6 +211,7 @@ class MonitoringAgent:
             except Exception as e:
                 logger.error(f"Heartbeat error: {e}")
             await asyncio.sleep(self.config.heartbeat_interval_seconds)
+
 
     async def run(self):
         heartbeat_task = asyncio.create_task(self.heartbeat_loop())

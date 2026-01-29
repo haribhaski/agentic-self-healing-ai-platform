@@ -12,13 +12,16 @@ import logging
 import threading
 import time
 import random
-from datetime import datetime
+from datetime import datetime, timezone
 import psutil
 
 from common.logger import setup_logger
 from common.metrics_utils import AgentMetricsExporter
 
-logger = setup_logger("FeatureAgent", config.kafka)
+# Log file path
+LOG_FILE = os.path.join(os.path.dirname(__file__), "../../backend/logs/feature.log")
+
+logger = setup_logger("FeatureAgent", config.kafka, log_file=LOG_FILE)
 
 class FeatureAgent:
     def __init__(self):
@@ -28,6 +31,8 @@ class FeatureAgent:
         self.events_processed = 0
         self.running = True
         self.last_latency = 0.0
+        self.process = psutil.Process()
+        self.process.cpu_percent()
         
         # Signal handling for graceful shutdown
         signal.signal(signal.SIGINT, self.handle_shutdown)
@@ -57,7 +62,7 @@ class FeatureAgent:
         
         return FeatureVector(
             trace_id=event.trace_id,
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
             features=features,
             metadata={"original_event_type": event.event_type}
         )
@@ -85,14 +90,13 @@ class FeatureAgent:
     def send_heartbeat(self):
         while self.running:
             try:
-                process = psutil.Process()
                 metric = AgentMetric(
                     agent="FeatureAgent",
                     status="OK",
                     latency_ms=self.last_latency,
-                    timestamp=datetime.utcnow().isoformat(),
-                    cpu_percent=process.cpu_percent(),
-                    memory_mb=process.memory_info().rss / 1024 / 1024,
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    cpu_percent=self.process.cpu_percent(),
+                    memory_mb=self.process.memory_info().rss / 1024 / 1024,
                     events_processed=self.events_processed
                 )
                 self.producer.send("agent-metrics", metric.to_json())

@@ -19,7 +19,10 @@ import random
 import threading
 import psutil
 
-logger = setup_logger("IngestionAgent", config.kafka)
+# Log file path
+LOG_FILE = os.path.join(os.path.dirname(__file__), "../../backend/logs/ingestion.log")
+
+logger = setup_logger("IngestionAgent", config.kafka, log_file=LOG_FILE)
 
 class IngestionAgent:
     def __init__(self):
@@ -43,6 +46,7 @@ class IngestionAgent:
         signal.signal(signal.SIGTERM, self.handle_shutdown)
         
         logger.info("IngestionAgent initialized")
+
     
     def handle_shutdown(self, signum, frame):
         logger.info(f"Received signal {signum}, shutting down...")
@@ -151,19 +155,26 @@ class IngestionAgent:
         
         logger.info("Starting event ingestion...")
         try:
+            target_rate = 1000 # events per second
+            batch_size = 100
+            interval = batch_size / target_rate
+            
             while self.running:
-                event = self.generate_synthetic_event()
+                loop_start = time.time()
                 
-                start_time = time.time()
-                success = self.producer.send("raw-events", event.to_json(), key=event.trace_id)
-                self.last_send_latency = (time.time() - start_time) * 1000
-                
-                if success:
+                # Send a larger batch for high throughput
+                for _ in range(batch_size):
+                    event = self.generate_synthetic_event()
+                    self.producer.send("raw-events", event.to_json(), key=event.trace_id)
                     self.events_processed += 1
-                    if self.events_processed % 100 == 0:
-                        logger.info(f"Processed {self.events_processed} events")
                 
-                time.sleep(random.uniform(0.1, 0.5)) # Slightly slower for stability
+                if self.events_processed % 1000 == 0:
+                    logger.info(f"Processed {self.events_processed} events")
+                
+                elapsed = time.time() - loop_start
+                sleep_time = interval - elapsed
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
                 
         except Exception as e:
             logger.error(f"Unexpected error in IngestionAgent: {e}")
