@@ -1,1 +1,1 @@
-2026-01-29 17:39:46,897 - HealingAgent - INFO - HealingAgent started, consuming from alerts and policy-decisions
+/bin/bash: line 5: python: command not found

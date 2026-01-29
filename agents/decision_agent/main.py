@@ -69,8 +69,8 @@ class DecisionAgent:
                     
                     decision_event = {
                         "trace_id": trace_id,
-                        "action": action,
-                        "reason": reason,
+                        "decision": action,
+                        "reasoning": reason,
                         "risk_score": prediction_data.get('confidence', 0.0),
                         "model_version": prediction_data.get('model_version', 'UNKNOWN'),
                         "timestamp": datetime.utcnow().isoformat()
