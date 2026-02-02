@@ -1,8 +1,8 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Heart, Activity, Zap, Shield, CheckCircle, AlertTriangle, XCircle, Clock } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Heart, Shield, CheckCircle, AlertTriangle, XCircle } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
 interface LogEntry {
   time: string;
@@ -12,6 +12,16 @@ interface LogEntry {
   agent?: string;
 }
 
+type AgentMetric = {
+  agent: string;
+  status: string;
+  latency_ms: number;
+  timestamp: string;
+  cpu_percent: number;
+  memory_mb: number;
+  events_processed: number;
+};
+
 const healthMetrics = [
   { label: "System Health", value: 98.5, color: "#10b981" },
   { label: "Agent Efficiency", value: 94.2, color: "#00d9ff" },
@@ -20,56 +30,66 @@ const healthMetrics = [
 
 export function SelfHealingStatus() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  
 
+  // ✅ NEW: track HealingAgent heartbeat from agent-metrics
+  const [healingMetric, setHealingMetric] = useState<AgentMetric | null>(null);
+  const [healingLastSeenMs, setHealingLastSeenMs] = useState<number>(0);
+  const [nowMs, setNowMs] = useState<number>(Date.now());
+
+  // keeps UI updating even if logs are quiet
+  useEffect(() => {
+    const t = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  // ✅ SSE 1: logs (your existing logic)
   useEffect(() => {
     let eventSource: EventSource | null = null;
-    let reconnectTimeout: NodeJS.Timeout;
+    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 
     const connect = () => {
-      if (eventSource) {
-        eventSource.close();
-      }
-
-      eventSource = new EventSource('/api/logs');
+      eventSource?.close();
+      eventSource = new EventSource("/api/logs");
 
       eventSource.onmessage = (event) => {
         try {
           if (!event.data) return;
-          
-          let rawData;
+
+          let rawData: any;
           try {
             rawData = JSON.parse(event.data);
-          } catch (e) {
-            // Handle non-JSON logs gracefully
+          } catch {
             rawData = {
               timestamp: new Date().toISOString(),
-              level: 'info',
+              level: "info",
               message: event.data,
-              agent: 'system'
+              agent: "system",
             };
           }
 
+          const agentName = rawData.agent ?? rawData.logger ?? rawData.service ?? "system";
+
           const newLog: LogEntry = {
             time: new Date(rawData.timestamp).toLocaleTimeString(),
-            type: rawData.level?.toLowerCase() === 'error' ? 'error' : 'info',
+            type: rawData.level?.toLowerCase() === "error" ? "error" : "info",
             message: rawData.message,
-            status: rawData.level?.toLowerCase() === 'error' ? 'error' : 'success',
-            agent: rawData.agent,
+            status: rawData.level?.toLowerCase() === "error" ? "error" : "success",
+            agent: agentName,
           };
-          
-          // Only show logs from Healing Agent as requested by user
-          if (rawData.agent === 'HealingAgent') {
+
+          // Only show logs from HealingAgent
+          if (agentName === "HealingAgent") {
             setLogs((prev) => [newLog, ...prev].slice(0, 50));
           }
         } catch (error) {
-          console.error('Failed to parse log:', error);
+          console.error("Failed to parse log:", error);
         }
       };
 
       eventSource.onerror = (error) => {
-        console.error('SSE connection failed, reconnecting...', error);
+        console.error("SSE /api/logs failed, reconnecting...", error);
         eventSource?.close();
-        // Reconnect after 3 seconds
         reconnectTimeout = setTimeout(connect, 3000);
       };
     };
@@ -77,12 +97,60 @@ export function SelfHealingStatus() {
     connect();
 
     return () => {
-      if (eventSource) eventSource.close();
-      clearTimeout(reconnectTimeout);
+      eventSource?.close();
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+    };
+  }, []);
+
+  // ✅ SSE 2: agent-metrics (THIS fixes idle)
+  useEffect(() => {
+    let es: EventSource | null = null;
+    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    const connect = () => {
+      es?.close();
+      es = new EventSource("/api/agent-metrics");
+
+      es.onmessage = (event) => {
+        try {
+          if (!event.data) return;
+          const m = JSON.parse(event.data) as AgentMetric;
+
+          if (m.agent === "HealingAgent") {
+            setHealingMetric(m);
+            setHealingLastSeenMs(Date.now());
+          }
+        } catch (e) {
+          console.error("Failed to parse agent-metrics:", e);
+        }
+      };
+
+      es.onerror = (error) => {
+        console.error("SSE /api/agent-metrics failed, reconnecting...", error);
+        es?.close();
+        reconnectTimeout = setTimeout(connect, 3000);
+      };
+    };
+
+    connect();
+
+    return () => {
+      es?.close();
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
     };
   }, []);
 
   const healingEvents = logs.slice(0, 6);
+
+  // ✅ Status based on last heartbeat time
+  const isOperational = useMemo(() => {
+    if (!healingLastSeenMs) return false;
+    return nowMs - healingLastSeenMs < 20000; // 20s window
+  }, [healingLastSeenMs, nowMs]);
+
+  const statusText = isOperational ? "OPERATIONAL" : "IDLE";
+  const statusColor = isOperational ? "text-[#10b981]" : "text-[#f59e0b]";
+  const dotColor = isOperational ? "bg-[#10b981]" : "bg-[#f59e0b]";
 
   return (
     <div className="glass-card rounded-xl p-6 glow-border-green">
@@ -97,15 +165,22 @@ export function SelfHealingStatus() {
           </motion.div>
           <div>
             <h3 className="font-display text-lg font-semibold text-white">Self-Healing Status</h3>
-            <p className="text-sm text-[#6b6b80]">Autonomous recovery system</p>
+            <p className="text-sm text-[#6b6b80]">
+              {healingMetric
+                ? `HealingAgent: ${healingMetric.status} • CPU ${healingMetric.cpu_percent.toFixed(1)}% • RAM ${healingMetric.memory_mb.toFixed(1)}MB`
+                : "Autonomous recovery system"}
+            </p>
           </div>
         </div>
+
         <div className="flex items-center gap-2">
           <div className="relative">
-            <div className="w-3 h-3 rounded-full bg-[#10b981]" />
-            <div className="absolute inset-0 w-3 h-3 rounded-full bg-[#10b981] animate-ping opacity-75" />
+            <div className={`w-3 h-3 rounded-full ${dotColor}`} />
+            {isOperational && (
+              <div className={`absolute inset-0 w-3 h-3 rounded-full ${dotColor} animate-ping opacity-75`} />
+            )}
           </div>
-          <span className="text-xs text-[#10b981] font-medium">OPERATIONAL</span>
+          <span className={`text-xs font-medium ${statusColor}`}>{statusText}</span>
         </div>
       </div>
 
@@ -120,14 +195,7 @@ export function SelfHealingStatus() {
           >
             <div className="relative w-12 h-12 mx-auto mb-2">
               <svg className="w-12 h-12 transform -rotate-90">
-                <circle
-                  cx="24"
-                  cy="24"
-                  r="20"
-                  stroke="#0a0a0f"
-                  strokeWidth="4"
-                  fill="none"
-                />
+                <circle cx="24" cy="24" r="20" stroke="#0a0a0f" strokeWidth="4" fill="none" />
                 <motion.circle
                   cx="24"
                   cy="24"
@@ -158,7 +226,7 @@ export function SelfHealingStatus() {
           <h4 className="text-sm font-medium text-[#6b6b80]">Recent Healing Events</h4>
           <span className="text-xs text-[#6b6b80]">Last 24h: 12 events</span>
         </div>
-        
+
         {healingEvents.map((event, i) => (
           <motion.div
             key={i}
@@ -179,19 +247,6 @@ export function SelfHealingStatus() {
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
-                  <span
-                    className={`text-xs px-2 py-0.5 rounded-full ${
-                      event.type === "auto-remediated"
-                        ? "bg-[#10b981]/20 text-[#10b981]"
-                        : event.type === "drift-detected"
-                        ? "bg-[#7c3aed]/20 text-[#7c3aed]"
-                        : event.type === "anomaly"
-                        ? "bg-[#ff4757]/20 text-[#ff4757]"
-                        : "bg-[#f59e0b]/20 text-[#f59e0b]"
-                    }`}
-                  >
-                    {event.type}
-                  </span>
                   <span className="text-xs text-[#6b6b80]">{event.time}</span>
                 </div>
                 <p className="text-sm text-white/80">{event.message}</p>
@@ -209,9 +264,7 @@ export function SelfHealingStatus() {
       >
         <div className="flex items-center gap-2">
           <Shield className="w-4 h-4 text-[#10b981]" />
-          <p className="text-xs text-[#10b981]">
-            MTTR: 2.3 min • Recovery Success: 99.1%
-          </p>
+          <p className="text-xs text-[#10b981]">MTTR: 2.3 min • Recovery Success: 99.1%</p>
         </div>
       </motion.div>
     </div>

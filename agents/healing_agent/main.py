@@ -203,12 +203,23 @@ class HealingAgent:
                     events_processed=self.events_processed
                 )
             except Exception as e:
-                logger.error(f"Heartbeat error: {e}")
+                logger.error(f"Heartbeat error:{e}")
             await asyncio.sleep(self.config.heartbeat_interval_seconds)
+            self.producer.send('agent-metrics', metric.to_json())
+            logger.info("✅ sent agent-metrics heartbeat")
+
+            self.db.update_agent_health(...)
+            logger.info("✅ updated DB agent health")
+
 
     async def run(self):
         heartbeat_task = asyncio.create_task(self.heartbeat_loop())
-        
+        try:
+            await asyncio.get_event_loop().run_in_executor(None, self.consumer.start)
+        finally:
+            self.cleanup()
+            heartbeat_task.cancel()
+
         self.consumer = create_consumer(
             self.config.kafka,
             ['alerts', 'policy-decisions'],
