@@ -1,5 +1,4 @@
 "use client";
-
 import { motion } from "framer-motion";
 import {
   Bot,
@@ -12,6 +11,8 @@ import {
   Clock,
   Zap,
   Activity,
+  Database,
+  Scale,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -25,60 +26,67 @@ type AgentMetric = {
   events_processed: number;
 };
 
+// Updated to match the ACTUAL pipeline architecture
 const INITIAL_AGENTS = [
   {
-    name: "Ingestion Agent",
-    icon: Brain,
-    status: "active",
-    task: "Injecting events into Kafka",
+    name: "IngestAgent",
+    icon: Database,
+    status: "idle",
+    task: "Reading HDFS, sending raw-events & features",
     decisions: 0,
     color: "#00d9ff",
     lastSeenMs: 0,
+    topic: "→ raw-events, features",
   },
   {
-    name: "Feature Agent",
-    icon: Search,
-    status: "active",
-    task: "Processing raw features",
+    name: "ModelAgent",
+    icon: Brain,
+    status: "idle",
+    task: "Consuming features, producing predictions",
     decisions: 0,
     color: "#7c3aed",
     lastSeenMs: 0,
+    topic: "features → predictions",
   },
   {
-    name: "Model Agent",
-    icon: Zap,
-    status: "active",
-    task: "Executing model inference",
-    decisions: 0,
-    color: "#10b981",
-    lastSeenMs: 0,
-  },
-  {
-    name: "Decision Agent",
+    name: "DecisionAgent",
     icon: Shield,
-    status: "active",
-    task: "Applying policy logic",
+    status: "idle",
+    task: "Consuming predictions, producing decisions",
     decisions: 0,
     color: "#f59e0b",
     lastSeenMs: 0,
+    topic: "predictions → decisions",
   },
   {
-    name: "Monitoring Agent",
+    name: "MonitoringAgent",
     icon: Activity,
-    status: "active",
-    task: "Analyzing metrics stream",
+    status: "idle",
+    task: "Monitoring metrics & creating alerts",
     decisions: 0,
     color: "#3b82f6",
     lastSeenMs: 0,
+    topic: "metrics → alerts",
   },
   {
-    name: "Healing Agent",
+    name: "HealingAgent",
     icon: Wrench,
     status: "idle",
-    task: "Awaiting remediation tasks",
+    task: "Awaiting incidents to heal",
     decisions: 0,
     color: "#ff4757",
     lastSeenMs: 0,
+    topic: "alerts → actions",
+  },
+  {
+    name: "AGL_Mock",
+    icon: Scale,
+    status: "idle",
+    task: "Auto-approving policy requests",
+    decisions: 0,
+    color: "#10b981",
+    lastSeenMs: 0,
+    topic: "policy-requests → decisions",
   },
 ];
 
@@ -86,11 +94,15 @@ const statusConfig = {
   active: { color: "#10b981", label: "Active", Icon: CheckCircle },
   idle: { color: "#6b6b80", label: "Idle", Icon: Clock },
   pending: { color: "#f59e0b", label: "Pending", Icon: AlertTriangle },
+  OK: { color: "#10b981", label: "Active", Icon: CheckCircle },
+  SAFE_MODE: { color: "#f59e0b", label: "Safe Mode", Icon: AlertTriangle },
+  down: { color: "#ff4757", label: "Down", Icon: AlertTriangle },
 };
 
-// Normalize names so "HealingAgent" matches "Healing Agent"
-function normalizeAgentName(s: string) {
-  return s.toLowerCase().replace(/\s+/g, "").replace(/agent$/, "");
+// Normalize agent names for matching
+function normalizeAgentName(s: string): string {
+  // Remove spaces, underscores, and "Agent" suffix, lowercase
+  return s.toLowerCase().replace(/[\s_]+/g, "").replace(/agent$/i, "").replace(/mock$/i, "");
 }
 
 function parseTimestampMs(ts: string): number {
@@ -102,7 +114,7 @@ export function AgentStatus() {
   const [agents, setAgents] = useState(INITIAL_AGENTS);
   const [nowMs, setNowMs] = useState(Date.now());
 
-  // Tick so status can flip to idle if heartbeats stop
+  // Tick every second to update derived status
   useEffect(() => {
     const t = setInterval(() => setNowMs(Date.now()), 1000);
     return () => clearInterval(t);
@@ -114,13 +126,15 @@ export function AgentStatus() {
     let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 
     const connect = () => {
+      // Close existing connections
       logSource?.close();
       metricsSource?.close();
 
+      // Connect to SSE endpoints
       logSource = new EventSource("/api/logs");
       metricsSource = new EventSource("/api/agent-metrics");
 
-      // Logs: update task text + mark active
+      // Handle log messages (optional - updates task text)
       logSource.onmessage = (event) => {
         try {
           if (!event.data) return;
@@ -131,11 +145,10 @@ export function AgentStatus() {
 
           setAgents((prev) =>
             prev.map((agent) => {
-              const a = normalizeAgentName(agent.name);
-              if (a === incoming) {
+              const normalized = normalizeAgentName(agent.name);
+              if (normalized === incoming) {
                 return {
                   ...agent,
-                  status: "active",
                   task: rawData.message ?? agent.task,
                   lastSeenMs: Date.now(),
                 };
@@ -143,11 +156,12 @@ export function AgentStatus() {
               return agent;
             })
           );
-        } catch {}
+        } catch (err) {
+          console.error("Error parsing log:", err);
+        }
       };
 
-      // Metrics: THIS IS THE IMPORTANT FIX
-      // Update decisions + lastSeen, and mark active if heartbeat is recent
+      // Handle agent metrics (heartbeats) - CRITICAL for status
       metricsSource.onmessage = (event) => {
         try {
           if (!event.data) return;
@@ -159,42 +173,75 @@ export function AgentStatus() {
 
           setAgents((prev) =>
             prev.map((agent) => {
-              const a = normalizeAgentName(agent.name);
-              if (a === incoming) {
+              const normalized = normalizeAgentName(agent.name);
+              if (normalized === incoming) {
+                // Update events processed count
+                const newDecisions =
+                  typeof data.events_processed === "number"
+                    ? data.events_processed
+                    : agent.decisions;
+
+                // Update task based on agent and status
+                let newTask = agent.task;
+                if (agent.name === "HealingAgent") {
+                  if (data.status === "active" || newDecisions > agent.decisions) {
+                    newTask = "Executing healing actions";
+                  } else {
+                    newTask = "Awaiting incidents to heal";
+                  }
+                } else if (agent.name === "ModelAgent") {
+                  if (data.status === "SAFE_MODE") {
+                    newTask = "Safe mode - using rule-based predictions";
+                  } else if (data.status === "active") {
+                    newTask = "Processing features → predictions";
+                  } else if (data.status === "OK") {
+                    newTask = "Ready to process features";
+                  }
+                } else if (agent.name === "DecisionAgent") {
+                  if (data.status === "active") {
+                    newTask = "Processing predictions → decisions";
+                  } else if (data.status === "idle" || data.status === "OK") {
+                    newTask = "Ready to process predictions";
+                  }
+                } else if (agent.name === "AGL_Mock") {
+                  if (newDecisions > agent.decisions) {
+                    newTask = "Approving policy requests";
+                  } else {
+                    newTask = "Awaiting policy requests";
+                  }
+                }
+
                 return {
                   ...agent,
-                  // ✅ update decisions
-                  decisions:
-                    typeof data.events_processed === "number"
-                      ? data.events_processed
-                      : agent.decisions,
-                  // ✅ mark last seen from heartbeat
+                  decisions: newDecisions,
                   lastSeenMs: metricSeenMs,
-                  // ✅ mark active (heartbeat proves it's alive)
-                  status: "active",
-                  // optional: show status string from metric
-                  task:
-                    agent.name === "Healing Agent"
-                      ? data.events_processed === 0
-                        ? "Awaiting remediation tasks"
-                        : "Executing remediation"
-                      : agent.task,
+                  task: newTask,
+                  // Store raw status for reference
+                  rawStatus: data.status,
                 };
               }
               return agent;
             })
           );
-        } catch {}
+        } catch (err) {
+          console.error("Error parsing metric:", err);
+        }
       };
 
+      // Handle connection errors with reconnect
       logSource.onerror = () => {
+        console.warn("Log stream disconnected, reconnecting...");
         logSource?.close();
         metricsSource?.close();
+        if (reconnectTimeout) clearTimeout(reconnectTimeout);
         reconnectTimeout = setTimeout(connect, 3000);
       };
+
       metricsSource.onerror = () => {
+        console.warn("Metrics stream disconnected, reconnecting...");
         logSource?.close();
         metricsSource?.close();
+        if (reconnectTimeout) clearTimeout(reconnectTimeout);
         reconnectTimeout = setTimeout(connect, 3000);
       };
     };
@@ -208,18 +255,49 @@ export function AgentStatus() {
     };
   }, []);
 
-  // ✅ Derive status from heartbeat freshness (so it doesn’t stay active forever)
+  // Derive final status from heartbeat freshness with hysteresis to prevent glitching
   const agentsWithFreshStatus = useMemo(() => {
+    const HEARTBEAT_TIMEOUT_MS = 35000; // 35 seconds (5s buffer over monitoring timeout)
+    const ACTIVE_THRESHOLD_MS = 15000; // 15 seconds - consider active if seen recently
+
     return agents.map((a) => {
-      const alive = a.lastSeenMs > 0 && nowMs - a.lastSeenMs < 20000; // 20s
+      const timeSinceLastSeen = nowMs - a.lastSeenMs;
+      const isAlive = a.lastSeenMs > 0 && timeSinceLastSeen < HEARTBEAT_TIMEOUT_MS;
+      const isRecentlyActive = timeSinceLastSeen < ACTIVE_THRESHOLD_MS;
+
+      // Determine final status with hysteresis
+      let finalStatus: keyof typeof statusConfig = "idle";
+      
+      if (!isAlive) {
+        finalStatus = "down";
+      } else {
+        // Check raw status from metric
+        const rawStatus = (a as any).rawStatus;
+        
+        if (rawStatus === "SAFE_MODE") {
+          finalStatus = "SAFE_MODE";
+        } else if (rawStatus === "active") {
+          finalStatus = "active";
+        } else if (rawStatus === "OK" || rawStatus === "idle") {
+          // Use recency to determine if should show as active
+          // This prevents glitching when agent alternates between processing/idle
+          finalStatus = isRecentlyActive ? "active" : "idle";
+        } else {
+          finalStatus = "active"; // Default to active if heartbeat is fresh
+        }
+      }
+
       return {
         ...a,
-        status: alive ? "active" : "idle",
+        status: finalStatus,
+        timeSinceLastSeen,
       };
     });
   }, [agents, nowMs]);
 
-  const activeCount = agentsWithFreshStatus.filter((a) => a.status === "active").length;
+  const activeCount = agentsWithFreshStatus.filter(
+    (a) => a.status === "active" || a.status === "SAFE_MODE"
+  ).length;
 
   return (
     <div className="glass-card rounded-xl p-6">
@@ -229,8 +307,12 @@ export function AgentStatus() {
             <Bot className="w-5 h-5 text-[#00d9ff]" />
           </div>
           <div>
-            <h3 className="font-display text-lg font-semibold text-white">AGL Agents</h3>
-            <p className="text-sm text-[#6b6b80]">Agent Lightning Framework</p>
+            <h3 className="font-display text-lg font-semibold text-white">
+              Multi-Agent System
+            </h3>
+            <p className="text-sm text-[#6b6b80]">
+              Self-Healing AI Pipeline
+            </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -243,7 +325,9 @@ export function AgentStatus() {
 
       <div className="grid gap-3">
         {agentsWithFreshStatus.map((agent, i) => {
-          const status = statusConfig[agent.status as keyof typeof statusConfig];
+          const status =
+            statusConfig[agent.status as keyof typeof statusConfig] ||
+            statusConfig.idle;
           const StatusIcon = status.Icon;
 
           return (
@@ -256,17 +340,29 @@ export function AgentStatus() {
             >
               <div className="flex items-start justify-between mb-3">
                 <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg" style={{ backgroundColor: `${agent.color}20` }}>
-                    <agent.icon className="w-4 h-4" style={{ color: agent.color }} />
+                  <div
+                    className="p-2 rounded-lg"
+                    style={{ backgroundColor: `${agent.color}20` }}
+                  >
+                    <agent.icon
+                      className="w-4 h-4"
+                      style={{ color: agent.color }}
+                    />
                   </div>
                   <div>
-                    <h4 className="text-sm font-medium text-white">{agent.name}</h4>
-                    <p className="text-xs text-[#6b6b80] mt-0.5">{agent.task}</p>
+                    <h4 className="text-sm font-medium text-white">
+                      {agent.name}
+                    </h4>
+                    <p className="text-xs text-[#6b6b80] mt-0.5">
+                      {agent.task}
+                    </p>
                   </div>
                 </div>
-
                 <div className="flex items-center gap-1.5">
-                  <StatusIcon className="w-3.5 h-3.5" style={{ color: status.color }} />
+                  <StatusIcon
+                    className="w-3.5 h-3.5"
+                    style={{ color: status.color }}
+                  />
                   <span className="text-xs" style={{ color: status.color }}>
                     {status.label}
                   </span>
@@ -276,11 +372,19 @@ export function AgentStatus() {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4">
                   <div className="text-xs text-[#6b6b80]">
-                    Decisions: <span className="font-mono text-white">{agent.decisions}</span>
+                    Events:{" "}
+                    <span className="font-mono text-white">
+                      {agent.decisions.toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="text-xs text-[#6b6b80]">
+                    Topic:{" "}
+                    <span className="font-mono text-[#00d9ff]">
+                      {agent.topic}
+                    </span>
                   </div>
                 </div>
-
-                {agent.status === "active" && (
+                {(agent.status === "active" || agent.status === "SAFE_MODE") && (
                   <div className="flex gap-0.5">
                     {[...Array(4)].map((_, j) => (
                       <motion.div
@@ -288,7 +392,11 @@ export function AgentStatus() {
                         className="w-1 rounded-full"
                         style={{ backgroundColor: agent.color }}
                         animate={{ height: [8, 16, 8] }}
-                        transition={{ duration: 0.8, repeat: Infinity, delay: j * 0.1 }}
+                        transition={{
+                          duration: 0.8,
+                          repeat: Infinity,
+                          delay: j * 0.1,
+                        }}
                       />
                     ))}
                   </div>

@@ -19,6 +19,7 @@ class IncidentStatus(str, Enum):
     FAILED = "FAILED"
 
 class AGLDecision(str, Enum):
+    PENDING = "PENDING"
     APPROVED = "APPROVED"
     DENIED = "DENIED"
     MODIFIED = "MODIFIED"
@@ -136,6 +137,7 @@ class Feedback:
     def from_json(cls, json_str: str) -> 'Feedback':
         return cls(**json.loads(json_str))
 
+from typing import Optional
 @dataclass
 class Alert:
     alert_id: str
@@ -144,57 +146,150 @@ class Alert:
     timestamp: str
     metrics_snapshot: Dict[str, Any]
     description: str
-    
+    incident_id: Optional[str] = None
+
     def to_json(self) -> str:
         data = asdict(self)
         data['alert_type'] = self.alert_type.value
+        # Only include incident_id if not None
+        if data.get('incident_id') is None:
+            data.pop('incident_id', None)
         return json.dumps(data)
-    
+
     @classmethod
     def from_json(cls, json_str: str) -> 'Alert':
         data = json.loads(json_str)
         data['alert_type'] = IncidentType(data['alert_type'])
         return cls(**data)
 
+"""
+Additional schema classes for HealingAgent workflow
+Add these to your existing common/schemas.py file
+"""
+
+from enum import Enum
+from dataclasses import dataclass
+import json
+
+
+class ActionType(Enum):
+    """Types of healing actions"""
+    RESTART_AGENT = "RESTART_AGENT"
+    ROLLBACK_MODEL = "ROLLBACK_MODEL"
+    ENABLE_SAFE_MODE = "ENABLE_SAFE_MODE"
+    TRIGGER_RETRAINING = "TRIGGER_RETRAINING"
+
+
 @dataclass
-class PolicyRequest:
-    request_id: str
-    incident_id: str
-    incident_type: IncidentType
-    proposed_action: Dict[str, Any]
+class HealingAction:
+    """Represents a proposed healing action"""
+    action_type: ActionType
+    target: str
+    parameters: dict
     timestamp: str
-    context: Optional[Dict[str, Any]] = None
     
-    def to_json(self) -> str:
-        data = asdict(self)
-        data['incident_type'] = self.incident_type.value
-        return json.dumps(data)
+    def to_dict(self):
+        return {
+            "action_type": self.action_type.value if isinstance(self.action_type, ActionType) else self.action_type,
+            "target": self.target,
+            "parameters": self.parameters,
+            "timestamp": self.timestamp
+        }
+    
+    def to_json(self):
+        return json.dumps(self.to_dict())
     
     @classmethod
-    def from_json(cls, json_str: str) -> 'PolicyRequest':
-        data = json.loads(json_str)
-        data['incident_type'] = IncidentType(data['incident_type'])
-        return cls(**data)
+    def from_dict(cls, data):
+        return cls(
+            action_type=ActionType(data["action_type"]) if isinstance(data["action_type"], str) else data["action_type"],
+            target=data["target"],
+            parameters=data["parameters"],
+            timestamp=data["timestamp"]
+        )
+    
+    @classmethod
+    def from_json(cls, json_str):
+        return cls.from_dict(json.loads(json_str))
+
+
+@dataclass
+class PolicyRequest:
+    """Request sent from HealingAgent to AGL for approval"""
+    request_id: str
+    incident_id: int
+    proposed_action: dict  # HealingAction as dict
+    timestamp: str
+    
+    def to_dict(self):
+        return {
+            "request_id": self.request_id,
+            "incident_id": self.incident_id,
+            "proposed_action": self.proposed_action,
+            "timestamp": self.timestamp
+        }
+    
+    def to_json(self):
+        return json.dumps(self.to_dict())
+    
+    @classmethod
+    def from_dict(cls, data):
+        return cls(
+            request_id=data["request_id"],
+            incident_id=data["incident_id"],
+            proposed_action=data["proposed_action"],
+            timestamp=data["timestamp"]
+        )
+    
+    @classmethod
+    def from_json(cls, json_str):
+        return cls.from_dict(json.loads(json_str))
+
+
+class AGLDecision(Enum):
+    """AGL decision outcomes"""
+    APPROVED = "APPROVED"
+    DENIED = "DENIED"
+    ESCALATE = "ESCALATE"
+
 
 @dataclass
 class PolicyDecision:
+    """Decision sent from AGL back to HealingAgent"""
     request_id: str
-    incident_id: str
+    incident_id: int
     decision: AGLDecision
-    approved_action: Dict[str, Any]
+    approved_action: dict | None  # HealingAction as dict if approved
     timestamp: str
-    reasoning: Optional[str] = None
+    reasoning: str
     
-    def to_json(self) -> str:
-        data = asdict(self)
-        data['decision'] = self.decision.value
-        return json.dumps(data)
+    def to_dict(self):
+        return {
+            "request_id": self.request_id,
+            "incident_id": self.incident_id,
+            "decision": self.decision.value if isinstance(self.decision, AGLDecision) else self.decision,
+            "approved_action": self.approved_action,
+            "timestamp": self.timestamp,
+            "reasoning": self.reasoning
+        }
+    
+    def to_json(self):
+        return json.dumps(self.to_dict())
     
     @classmethod
-    def from_json(cls, json_str: str) -> 'PolicyDecision':
-        data = json.loads(json_str)
-        data['decision'] = AGLDecision(data['decision'])
-        return cls(**data)
+    def from_dict(cls, data):
+        return cls(
+            request_id=data["request_id"],
+            incident_id=data["incident_id"],
+            decision=AGLDecision(data["decision"]) if isinstance(data["decision"], str) else data["decision"],
+            approved_action=data.get("approved_action"),
+            timestamp=data["timestamp"],
+            reasoning=data.get("reasoning", "")
+        )
+    
+    @classmethod
+    def from_json(cls, json_str):
+        return cls.from_dict(json.loads(json_str))
 
 @dataclass
 class ConfigUpdate:

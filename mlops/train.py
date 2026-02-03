@@ -44,7 +44,7 @@ def generate_synthetic_data(n_samples=10000):
 
 def train_model(experiment_name="credit_risk_model"):
     """Train and log model to MLflow"""
-    mlflow.set_tracking_uri("http://localhost:5000")
+    mlflow.set_tracking_uri("http://localhost:5020")
     mlflow.set_experiment(experiment_name)
     
     logger.info("Generating synthetic training data...")

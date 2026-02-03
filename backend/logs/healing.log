@@ -1,5 +1,0 @@
-/Users/hariharanbhaskaran/orchids-projects/orchids-self-healing-ai/agents/healing_agent/main.py:44: DeprecationWarning: There is no current event loop
-  loop = asyncio.get_event_loop()
-2026-01-29 19:10:02,782 - HealingAgent - INFO - HealingAgent starting consumer...
-/Users/hariharanbhaskaran/orchids-projects/orchids-self-healing-ai/agents/healing_agent/main.py:190: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
-  timestamp=datetime.utcnow().isoformat(),

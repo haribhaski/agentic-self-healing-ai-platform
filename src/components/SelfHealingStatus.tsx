@@ -151,6 +151,7 @@ export function SelfHealingStatus() {
   const statusText = isOperational ? "OPERATIONAL" : "IDLE";
   const statusColor = isOperational ? "text-[#10b981]" : "text-[#f59e0b]";
   const dotColor = isOperational ? "bg-[#10b981]" : "bg-[#f59e0b]";
+  const healingTopics = "policy-requests, policy-decisions, config-updates";
 
   return (
     <div className="glass-card rounded-xl p-6 glow-border-green">
@@ -219,6 +220,19 @@ export function SelfHealingStatus() {
             <p className="text-xs text-[#6b6b80]">{metric.label}</p>
           </motion.div>
         ))}
+      </div>
+      {/* HealingAgent topics and events processed */}
+      <div className="mb-4">
+        <div className="flex items-center gap-2 text-xs text-[#6b6b80]">
+          <span>HealingAgent Topics:</span>
+          <span className="font-mono text-[#00d9ff]">{healingTopics}</span>
+        </div>
+        {healingMetric && (
+          <div className="flex items-center gap-2 text-xs text-[#6b6b80] mt-1">
+            <span>Events Processed:</span>
+            <span className="font-mono text-white">{healingMetric.events_processed}</span>
+          </div>
+        )}
       </div>
 
       <div className="space-y-3">

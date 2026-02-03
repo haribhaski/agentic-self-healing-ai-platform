@@ -5,7 +5,7 @@ from typing import Optional
 @dataclass
 class KafkaConfig:
     bootstrap_servers: str = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "127.0.0.1:29092")
-    auto_offset_reset: str = "latest"
+    auto_offset_reset: str = "earliest"
     enable_auto_commit: bool = True
     group_id_prefix: str = "agentic-platform-v3"
 
@@ -23,7 +23,7 @@ class DatabaseConfig:
 
 @dataclass
 class MLflowConfig:
-    tracking_uri: str = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5001")
+    tracking_uri: str = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5020")
     experiment_name: str = "agentic-ai-models"
     model_registry_name: str = "production-model"
 
@@ -76,7 +76,7 @@ class AgentConfig:
     monitoring: MonitoringConfig
     healing: HealingConfig
     metrics_port: int
-    heartbeat_interval_seconds: int = 10
+    heartbeat_interval_seconds: int = 5
 
 class Config:
     def __init__(self):
