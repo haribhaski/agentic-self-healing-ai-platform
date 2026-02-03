@@ -348,12 +348,12 @@ class StandaloneIngestionAgent:
                 import traceback
                 traceback.print_exc()
                 continue
-        
+            
         print(f"\n{'='*60}")
         print(f"✅ ALL FILES COMPLETED")
         print(f"{'='*60}")
         print(f"   Total events processed: {self.events_processed:,}")
-    
+
     def _create_event_from_row(self, row, source_file):
         """Create raw event dictionary from DataFrame row"""
         data_dict = {}

@@ -16,6 +16,18 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
+// Helper to fetch event count from log API
+async function fetchLogCount(agent: string): Promise<number> {
+  try {
+    const res = await fetch(`/api/logfile-counts?agent=${agent}`);
+    if (!res.ok) return 0;
+    const data = await res.json();
+    return typeof data.count === "number" ? data.count : 0;
+  } catch {
+    return 0;
+  }
+}
+
 type AgentMetric = {
   agent: string;
   status: string;
@@ -113,11 +125,44 @@ function parseTimestampMs(ts: string): number {
 export function AgentStatus() {
   const [agents, setAgents] = useState(INITIAL_AGENTS);
   const [nowMs, setNowMs] = useState(Date.now());
+  // Store log-based event counts
+  const [logCounts, setLogCounts] = useState<Record<string, number>>({});
 
   // Tick every second to update derived status
   useEffect(() => {
     const t = setInterval(() => setNowMs(Date.now()), 1000);
     return () => clearInterval(t);
+  }, []);
+
+  // Fetch log counts for all agents on mount and every 10s
+  useEffect(() => {
+    let cancelled = false;
+    async function updateCounts() {
+      const agentNames = [
+        "HealingAgent",
+        "MonitoringAgent",
+        "DecisionAgent",
+        "ModelAgent",
+        "AGL_Mock",
+      ];
+      const results = await Promise.all(
+        agentNames.map((name) => fetchLogCount(name))
+      );
+      if (!cancelled) {
+        setLogCounts(
+          agentNames.reduce((acc, name, i) => {
+            acc[name] = results[i];
+            return acc;
+          }, {} as Record<string, number>)
+        );
+      }
+    }
+    updateCounts();
+    const interval = setInterval(updateCounts, 10000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, []);
 
   useEffect(() => {
@@ -175,16 +220,12 @@ export function AgentStatus() {
             prev.map((agent) => {
               const normalized = normalizeAgentName(agent.name);
               if (normalized === incoming) {
-                // Update events processed count
-                const newDecisions =
-                  typeof data.events_processed === "number"
-                    ? data.events_processed
-                    : agent.decisions;
-
+                // Use log-based count if available, else fallback
+                const logCount = logCounts[agent.name] ?? agent.decisions;
                 // Update task based on agent and status
                 let newTask = agent.task;
                 if (agent.name === "HealingAgent") {
-                  if (data.status === "active" || newDecisions > agent.decisions) {
+                  if (data.status === "active" || logCount > agent.decisions) {
                     newTask = "Executing healing actions";
                   } else {
                     newTask = "Awaiting incidents to heal";
@@ -204,19 +245,17 @@ export function AgentStatus() {
                     newTask = "Ready to process predictions";
                   }
                 } else if (agent.name === "AGL_Mock") {
-                  if (newDecisions > agent.decisions) {
+                  if (logCount > agent.decisions) {
                     newTask = "Approving policy requests";
                   } else {
                     newTask = "Awaiting policy requests";
                   }
                 }
-
                 return {
                   ...agent,
-                  decisions: newDecisions,
+                  decisions: logCount,
                   lastSeenMs: metricSeenMs,
                   task: newTask,
-                  // Store raw status for reference
                   rawStatus: data.status,
                 };
               }
@@ -374,7 +413,7 @@ export function AgentStatus() {
                   <div className="text-xs text-[#6b6b80]">
                     Events:{" "}
                     <span className="font-mono text-white">
-                      {agent.decisions.toLocaleString()}
+                      {(logCounts[agent.name] ?? agent.decisions).toLocaleString()}
                     </span>
                   </div>
                   <div className="text-xs text-[#6b6b80]">

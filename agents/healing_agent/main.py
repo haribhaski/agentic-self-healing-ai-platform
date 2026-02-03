@@ -304,7 +304,6 @@ class HealingAgent:
             policy_request = PolicyRequest(
                 request_id=request_id,
                 incident_id=incident_id,
-                incident_type=alert.alert_type,
                 proposed_action=healing_action.to_dict(),
                 timestamp=datetime.now(timezone.utc).isoformat()
             )
