@@ -33,9 +33,8 @@ A mesh of 6 autonomous agents:
 ---
 
 ## 🛠 Tech Stack
-*   **Backend**: Python 3.12, Apache Kafka, PostgreSQL.
-*   **Frontend**: Next.js 15, Tailwind CSS, Framer Motion, Recharts.
-*   **MLOps**: MLflow, Evidently AI metrics.
+*   **Backend**: Python 3.12, Apache Kafka, PostgreSQL, Apache Hadoop, Prometheus.
+*   **Frontend**: Next.js 15, Tailwind CSS, Typescript, Framer Motion, Recharts.
 
 ---
 
@@ -47,11 +46,10 @@ A mesh of 6 autonomous agents:
     ```
 2.  **Start Frontend**:
     ```bash
-    npm run dev
+    bun dev
     ```
-3.  **Run System**:
+3.  **Run Agents**:
     ```bash
-    ./run_system.sh
+    bash run_all_agents.sh
     ```
 
-For detailed project insights, see `summar.md`.
