@@ -1,4 +1,4 @@
-# 🚀 Self-Healing Agentic AI Platform - Complete Setup Guide
+#  Self-Healing Agentic AI Platform - Complete Setup Guide
 
 ## Architecture Overview
 
@@ -284,7 +284,7 @@ docker exec -it kafka kafka-consumer-groups --bootstrap-server localhost:9092 --
 ✅ **AGL Governance** (policy approval layer)  
 ✅ **Self-Healing Playbooks** (4 scenarios with MTTR tracking)  
 ✅ **Memory Storage** (learns from past incidents)  
-✅ **Full Observability** (Prometheus + Grafana ready)
+✅ **Full Observability** (Prometheus ready)
 
 ## Demo Script for Viva
 
