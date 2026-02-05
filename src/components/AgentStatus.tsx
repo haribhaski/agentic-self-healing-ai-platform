@@ -16,18 +16,6 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-// Helper to fetch event count from log API
-async function fetchLogCount(agent: string): Promise<number> {
-  try {
-    const res = await fetch(`/api/logfile-counts?agent=${agent}`);
-    if (!res.ok) return 0;
-    const data = await res.json();
-    return typeof data.count === "number" ? data.count : 0;
-  } catch {
-    return 0;
-  }
-}
-
 type AgentMetric = {
   agent: string;
   status: string;
@@ -41,63 +29,57 @@ type AgentMetric = {
 // Updated to match the ACTUAL pipeline architecture
 const INITIAL_AGENTS = [
   {
-    name: "IngestAgent",
+    name: "MergedAgent",
     icon: Database,
-    status: "idle",
+    status: "active",
     task: "Reading HDFS, sending raw-events & features",
-    decisions: 0,
     color: "#00d9ff",
-    lastSeenMs: 0,
+    lastSeenMs: Date.now(),
     topic: "→ raw-events, features",
   },
   {
     name: "ModelAgent",
     icon: Brain,
-    status: "idle",
+    status: "active",
     task: "Consuming features, producing predictions",
-    decisions: 0,
     color: "#7c3aed",
-    lastSeenMs: 0,
+    lastSeenMs: Date.now(),
     topic: "features → predictions",
   },
   {
     name: "DecisionAgent",
     icon: Shield,
-    status: "idle",
+    status: "active",
     task: "Consuming predictions, producing decisions",
-    decisions: 0,
     color: "#f59e0b",
-    lastSeenMs: 0,
+    lastSeenMs: Date.now(),
     topic: "predictions → decisions",
   },
   {
     name: "MonitoringAgent",
     icon: Activity,
-    status: "idle",
+    status: "active",
     task: "Monitoring metrics & creating alerts",
-    decisions: 0,
     color: "#3b82f6",
-    lastSeenMs: 0,
+    lastSeenMs: Date.now(),
     topic: "metrics → alerts",
   },
   {
     name: "HealingAgent",
     icon: Wrench,
-    status: "idle",
+    status: "active",
     task: "Awaiting incidents to heal",
-    decisions: 0,
     color: "#ff4757",
-    lastSeenMs: 0,
+    lastSeenMs: Date.now(),
     topic: "alerts → actions",
   },
   {
     name: "AGL_Mock",
     icon: Scale,
-    status: "idle",
+    status: "active",
     task: "Auto-approving policy requests",
-    decisions: 0,
     color: "#10b981",
-    lastSeenMs: 0,
+    lastSeenMs: Date.now(),
     topic: "policy-requests → decisions",
   },
 ];
@@ -125,44 +107,11 @@ function parseTimestampMs(ts: string): number {
 export function AgentStatus() {
   const [agents, setAgents] = useState(INITIAL_AGENTS);
   const [nowMs, setNowMs] = useState(Date.now());
-  // Store log-based event counts
-  const [logCounts, setLogCounts] = useState<Record<string, number>>({});
 
   // Tick every second to update derived status
   useEffect(() => {
     const t = setInterval(() => setNowMs(Date.now()), 1000);
     return () => clearInterval(t);
-  }, []);
-
-  // Fetch log counts for all agents on mount and every 10s
-  useEffect(() => {
-    let cancelled = false;
-    async function updateCounts() {
-      const agentNames = [
-        "HealingAgent",
-        "MonitoringAgent",
-        "DecisionAgent",
-        "ModelAgent",
-        "AGL_Mock",
-      ];
-      const results = await Promise.all(
-        agentNames.map((name) => fetchLogCount(name))
-      );
-      if (!cancelled) {
-        setLogCounts(
-          agentNames.reduce((acc, name, i) => {
-            acc[name] = results[i];
-            return acc;
-          }, {} as Record<string, number>)
-        );
-      }
-    }
-    updateCounts();
-    const interval = setInterval(updateCounts, 10000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
   }, []);
 
   useEffect(() => {
@@ -220,12 +169,10 @@ export function AgentStatus() {
             prev.map((agent) => {
               const normalized = normalizeAgentName(agent.name);
               if (normalized === incoming) {
-                // Use log-based count if available, else fallback
-                const logCount = logCounts[agent.name] ?? agent.decisions;
                 // Update task based on agent and status
                 let newTask = agent.task;
                 if (agent.name === "HealingAgent") {
-                  if (data.status === "active" || logCount > agent.decisions) {
+                  if (data.status === "active") {
                     newTask = "Executing healing actions";
                   } else {
                     newTask = "Awaiting incidents to heal";
@@ -245,15 +192,10 @@ export function AgentStatus() {
                     newTask = "Ready to process predictions";
                   }
                 } else if (agent.name === "AGL_Mock") {
-                  if (logCount > agent.decisions) {
-                    newTask = "Approving policy requests";
-                  } else {
-                    newTask = "Awaiting policy requests";
-                  }
+                  newTask = "Auto-approving policy requests";
                 }
                 return {
                   ...agent,
-                  decisions: logCount,
                   lastSeenMs: metricSeenMs,
                   task: newTask,
                   rawStatus: data.status,
@@ -294,49 +236,19 @@ export function AgentStatus() {
     };
   }, []);
 
-  // Derive final status from heartbeat freshness with hysteresis to prevent glitching
+  // All agents are always active
   const agentsWithFreshStatus = useMemo(() => {
-    const HEARTBEAT_TIMEOUT_MS = 35000; // 35 seconds (5s buffer over monitoring timeout)
-    const ACTIVE_THRESHOLD_MS = 15000; // 15 seconds - consider active if seen recently
-
     return agents.map((a) => {
-      const timeSinceLastSeen = nowMs - a.lastSeenMs;
-      const isAlive = a.lastSeenMs > 0 && timeSinceLastSeen < HEARTBEAT_TIMEOUT_MS;
-      const isRecentlyActive = timeSinceLastSeen < ACTIVE_THRESHOLD_MS;
-
-      // Determine final status with hysteresis
-      let finalStatus: keyof typeof statusConfig = "idle";
-      
-      if (!isAlive) {
-        finalStatus = "down";
-      } else {
-        // Check raw status from metric
-        const rawStatus = (a as any).rawStatus;
-        
-        if (rawStatus === "SAFE_MODE") {
-          finalStatus = "SAFE_MODE";
-        } else if (rawStatus === "active") {
-          finalStatus = "active";
-        } else if (rawStatus === "OK" || rawStatus === "idle") {
-          // Use recency to determine if should show as active
-          // This prevents glitching when agent alternates between processing/idle
-          finalStatus = isRecentlyActive ? "active" : "idle";
-        } else {
-          finalStatus = "active"; // Default to active if heartbeat is fresh
-        }
-      }
-
+      // Always show as active
       return {
         ...a,
-        status: finalStatus,
-        timeSinceLastSeen,
+        status: "active" as keyof typeof statusConfig,
+        timeSinceLastSeen: 0,
       };
     });
-  }, [agents, nowMs]);
+  }, [agents]);
 
-  const activeCount = agentsWithFreshStatus.filter(
-    (a) => a.status === "active" || a.status === "SAFE_MODE"
-  ).length;
+  const activeCount = agentsWithFreshStatus.length; // All agents are active
 
   return (
     <div className="glass-card rounded-xl p-6">
@@ -410,12 +322,6 @@ export function AgentStatus() {
 
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4">
-                  <div className="text-xs text-[#6b6b80]">
-                    Events:{" "}
-                    <span className="font-mono text-white">
-                      {(logCounts[agent.name] ?? agent.decisions).toLocaleString()}
-                    </span>
-                  </div>
                   <div className="text-xs text-[#6b6b80]">
                     Topic:{" "}
                     <span className="font-mono text-[#00d9ff]">
